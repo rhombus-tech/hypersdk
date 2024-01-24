@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	runner "github.com/ava-labs/avalanche-network-runner/client"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/units"
@@ -43,72 +42,73 @@ func (h *Handler) ImportChain() error {
 }
 
 func (h *Handler) ImportANR() error {
-	ctx := context.Background()
+	return nil
+	// ctx := context.Background()
 
-	// Delete previous items
-	oldChains, err := h.DeleteChains()
-	if err != nil {
-		return err
-	}
-	if len(oldChains) > 0 {
-		utils.Outf("{{yellow}}deleted old chains:{{/}} %+v\n", oldChains)
-	}
+	// // Delete previous items
+	// oldChains, err := h.DeleteChains()
+	// if err != nil {
+	// 	return err
+	// }
+	// if len(oldChains) > 0 {
+	// 	utils.Outf("{{yellow}}deleted old chains:{{/}} %+v\n", oldChains)
+	// }
 
-	// Load new items from ANR
-	anrCli, err := runner.New(runner.Config{
-		Endpoint:    "0.0.0.0:12352",
-		DialTimeout: 10 * time.Second,
-	}, logging.NoLog{})
-	if err != nil {
-		return err
-	}
-	status, err := anrCli.Status(ctx)
-	if err != nil {
-		return err
-	}
-	subnets := map[ids.ID][]ids.ID{}
-	for chain, chainInfo := range status.ClusterInfo.CustomChains {
-		chainID, err := ids.FromString(chain)
-		if err != nil {
-			return err
-		}
-		subnetID, err := ids.FromString(chainInfo.SubnetId)
-		if err != nil {
-			return err
-		}
-		chainIDs, ok := subnets[subnetID]
-		if !ok {
-			chainIDs = []ids.ID{}
-		}
-		chainIDs = append(chainIDs, chainID)
-		subnets[subnetID] = chainIDs
-	}
-	var filledChainID ids.ID
-	for _, nodeInfo := range status.ClusterInfo.NodeInfos {
-		if len(nodeInfo.WhitelistedSubnets) == 0 {
-			continue
-		}
-		trackedSubnets := strings.Split(nodeInfo.WhitelistedSubnets, ",")
-		for _, subnet := range trackedSubnets {
-			subnetID, err := ids.FromString(subnet)
-			if err != nil {
-				return err
-			}
-			for _, chainID := range subnets[subnetID] {
-				uri := fmt.Sprintf("%s/ext/bc/%s", nodeInfo.Uri, chainID)
-				if err := h.StoreChain(chainID, uri); err != nil {
-					return err
-				}
-				utils.Outf(
-					"{{yellow}}stored chainID:{{/}} %s {{yellow}}uri:{{/}} %s\n",
-					chainID,
-					uri,
-				)
-				filledChainID = chainID
-			}
-		}
-	}
-	return h.StoreDefaultChain(filledChainID)
+	// // Load new items from ANR
+	// anrCli, err := runner.New(runner.Config{
+	// 	Endpoint:    "0.0.0.0:12352",
+	// 	DialTimeout: 10 * time.Second,
+	// }, logging.NoLog{})
+	// if err != nil {
+	// 	return err
+	// }
+	// status, err := anrCli.Status(ctx)
+	// if err != nil {
+	// 	return err
+	// }
+	// subnets := map[ids.ID][]ids.ID{}
+	// for chain, chainInfo := range status.ClusterInfo.CustomChains {
+	// 	chainID, err := ids.FromString(chain)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	subnetID, err := ids.FromString(chainInfo.SubnetId)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	chainIDs, ok := subnets[subnetID]
+	// 	if !ok {
+	// 		chainIDs = []ids.ID{}
+	// 	}
+	// 	chainIDs = append(chainIDs, chainID)
+	// 	subnets[subnetID] = chainIDs
+	// }
+	// var filledChainID ids.ID
+	// for _, nodeInfo := range status.ClusterInfo.NodeInfos {
+	// 	if len(nodeInfo.WhitelistedSubnets) == 0 {
+	// 		continue
+	// 	}
+	// 	trackedSubnets := strings.Split(nodeInfo.WhitelistedSubnets, ",")
+	// 	for _, subnet := range trackedSubnets {
+	// 		subnetID, err := ids.FromString(subnet)
+	// 		if err != nil {
+	// 			return err
+	// 		}
+	// 		for _, chainID := range subnets[subnetID] {
+	// 			uri := fmt.Sprintf("%s/ext/bc/%s", nodeInfo.Uri, chainID)
+	// 			if err := h.StoreChain(chainID, uri); err != nil {
+	// 				return err
+	// 			}
+	// 			utils.Outf(
+	// 				"{{yellow}}stored chainID:{{/}} %s {{yellow}}uri:{{/}} %s\n",
+	// 				chainID,
+	// 				uri,
+	// 			)
+	// 			filledChainID = chainID
+	// 		}
+	// 	}
+	// }
+	// return h.StoreDefaultChain(filledChainID)
 }
 
 type AvalancheOpsConfig struct {

@@ -70,10 +70,10 @@ func (mr *MockViewMockRecorder) GetValue(arg0, arg1 interface{}) *gomock.Call {
 }
 
 // NewView mocks base method.
-func (m *MockView) NewView(arg0 context.Context, arg1 merkledb.ViewChanges) (merkledb.TrieView, error) {
+func (m *MockView) NewView(arg0 context.Context, arg1 merkledb.ViewChanges) (merkledb.View, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "NewView", arg0, arg1)
-	ret0, _ := ret[0].(merkledb.TrieView)
+	ret0, _ := ret[0].(merkledb.View)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

@@ -11,12 +11,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fatih/color"
+
+	ginkgo "github.com/onsi/ginkgo/v2"
+
+	"github.com/onsi/gomega"
+
 	runner_sdk "github.com/ava-labs/avalanche-network-runner/client"
 	"github.com/ava-labs/avalanche-network-runner/rpcpb"
+
 	"github.com/ava-labs/avalanchego/config"
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/tests/fixture/e2e"
+	"github.com/ava-labs/avalanchego/tests/fixture/tmpnet"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/vms/platformvm/warp"
+
 	"github.com/ava-labs/hypersdk/codec"
 	"github.com/ava-labs/hypersdk/crypto/ed25519"
 	"github.com/ava-labs/hypersdk/examples/tokenvm/actions"
@@ -24,10 +34,8 @@ import (
 	"github.com/ava-labs/hypersdk/examples/tokenvm/consts"
 	trpc "github.com/ava-labs/hypersdk/examples/tokenvm/rpc"
 	"github.com/ava-labs/hypersdk/rpc"
+	"github.com/ava-labs/hypersdk/tests/fixture"
 	hutils "github.com/ava-labs/hypersdk/utils"
-	"github.com/fatih/color"
-	ginkgo "github.com/onsi/ginkgo/v2"
-	"github.com/onsi/gomega"
 )
 
 const (
@@ -43,21 +51,9 @@ func TestE2e(t *testing.T) {
 }
 
 var (
+	flagVars *e2e.FlagVars
+
 	requestTimeout time.Duration
-
-	networkRunnerLogLevel string
-	avalanchegoLogLevel   string
-	gRPCEp                string
-	gRPCGatewayEp         string
-
-	execPath  string
-	pluginDir string
-
-	vmGenesisPath    string
-	vmConfigPath     string
-	vmConfig         string
-	subnetConfigPath string
-	outputPath       string
 
 	mode string
 
@@ -72,80 +68,14 @@ var (
 )
 
 func init() {
+	// Configures flags used to configure tmpnet (via SynchronizedBeforeSuite)
+	flagVars = e2e.RegisterFlags()
+
 	flag.DurationVar(
 		&requestTimeout,
 		"request-timeout",
 		120*time.Second,
 		"timeout for transaction issuance and confirmation",
-	)
-
-	flag.StringVar(
-		&networkRunnerLogLevel,
-		"network-runner-log-level",
-		"info",
-		"gRPC server endpoint",
-	)
-
-	flag.StringVar(
-		&avalanchegoLogLevel,
-		"avalanchego-log-level",
-		"info",
-		"log level for avalanchego",
-	)
-
-	flag.StringVar(
-		&gRPCEp,
-		"network-runner-grpc-endpoint",
-		"0.0.0.0:8080",
-		"gRPC server endpoint",
-	)
-	flag.StringVar(
-		&gRPCGatewayEp,
-		"network-runner-grpc-gateway-endpoint",
-		"0.0.0.0:8081",
-		"gRPC gateway endpoint",
-	)
-
-	flag.StringVar(
-		&execPath,
-		"avalanchego-path",
-		"",
-		"avalanchego executable path",
-	)
-
-	flag.StringVar(
-		&pluginDir,
-		"avalanchego-plugin-dir",
-		"",
-		"avalanchego plugin directory",
-	)
-
-	flag.StringVar(
-		&vmGenesisPath,
-		"vm-genesis-path",
-		"",
-		"VM genesis file path",
-	)
-
-	flag.StringVar(
-		&vmConfigPath,
-		"vm-config-path",
-		"",
-		"VM configfile path",
-	)
-
-	flag.StringVar(
-		&subnetConfigPath,
-		"subnet-config-path",
-		"",
-		"Subnet configfile path",
-	)
-
-	flag.StringVar(
-		&outputPath,
-		"output-path",
-		"",
-		"output YAML path to write local cluster information",
 	)
 
 	flag.StringVar(
@@ -170,7 +100,61 @@ const (
 	modeRunSingle = "run-single"
 )
 
-var anrCli runner_sdk.Client
+var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
+	// Run only once in the first ginkgo process
+	return e2e.NewTestEnvironment(
+		flagVars,
+		// TODO(marun) Maybe set the logging level?
+		fixture.NewTmpnetNetwork(
+			utils.NewTmpnetSubnet(subnetAName, genesisPath),
+			utils.NewTmpnetSubnet(subnetBName, genesisPath),
+		),
+	).Marshal()
+}, func(envBytes []byte) {
+	// Run in every ginkgo process
+
+	require := require.New(ginkgo.GinkgoT())
+
+	// Initialize the local test environment from the global state
+	e2e.InitSharedTestEnvironment(envBytes)
+
+	network := e2e.Env.GetNetwork()
+
+	// By default all nodes are validating all subnets
+	validatorURIs := make([]string, len(network.Nodes))
+	for i, node := range network.Nodes {
+		validatorURIs[i] = node.URI
+	}
+
+	tmpnetSubnetA := network.GetSubnet(subnetAName)
+	require.NotNil(tmpnetSubnetA)
+	subnetA = &Subnet{
+		SubnetID:      tmpnetSubnetA.SubnetID,
+		BlockchainID:  tmpnetSubnetA.Chains[0].ChainID,
+		PreFundedKey:  tmpnetSubnetA.Chains[0].PreFundedKey.ToECDSA(),
+		ValidatorURIs: validatorURIs,
+	}
+
+	tmpnetSubnetB := network.GetSubnet(subnetBName)
+	require.NotNil(tmpnetSubnetB)
+	subnetB = &Subnet{
+		SubnetID:      tmpnetSubnetB.SubnetID,
+		BlockchainID:  tmpnetSubnetB.Chains[0].ChainID,
+		PreFundedKey:  tmpnetSubnetB.Chains[0].PreFundedKey.ToECDSA(),
+		ValidatorURIs: validatorURIs,
+	}
+
+	infoClient := info.NewClient(network.Nodes[0].URI)
+	cChainBlockchainID, err := infoClient.GetBlockchainID(e2e.DefaultContext(), "C")
+	require.NoError(err)
+
+	cChainSubnetDetails = &Subnet{
+		SubnetID:      constants.PrimaryNetworkID,
+		BlockchainID:  cChainBlockchainID,
+		PreFundedKey:  tmpnet.HardhatKey.ToECDSA(),
+		ValidatorURIs: validatorURIs,
+	}
+})
 
 var _ = ginkgo.BeforeSuite(func() {
 	gomega.Expect(mode).Should(gomega.Or(
@@ -180,26 +164,6 @@ var _ = ginkgo.BeforeSuite(func() {
 		gomega.Equal(modeRunSingle),
 	))
 	gomega.Expect(numValidators).Should(gomega.BeNumerically(">", 0))
-	logLevel, err := logging.ToLevel(networkRunnerLogLevel)
-	gomega.Expect(err).Should(gomega.BeNil())
-	logFactory := logging.NewFactory(logging.Config{
-		DisplayLevel: logLevel,
-		LogLevel:     logLevel,
-	})
-	log, err := logFactory.Make("main")
-	gomega.Expect(err).Should(gomega.BeNil())
-
-	anrCli, err = runner_sdk.New(runner_sdk.Config{
-		Endpoint:    gRPCEp,
-		DialTimeout: 10 * time.Second,
-	}, log)
-	gomega.Expect(err).Should(gomega.BeNil())
-
-	hutils.Outf(
-		"{{green}}sending 'start' with binary path:{{/}} %q (%q)\n",
-		execPath,
-		consts.ID,
-	)
 
 	// Load config data
 	if len(vmConfigPath) > 0 {
@@ -210,42 +174,6 @@ var _ = ginkgo.BeforeSuite(func() {
 		vmConfig = "{}"
 	}
 
-	// Start cluster
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	resp, err := anrCli.Start(
-		ctx,
-		execPath,
-		runner_sdk.WithPluginDir(pluginDir),
-		// We don't disable PUT gossip here because the E2E test adds multiple
-		// non-validating nodes (which will fall behind).
-		runner_sdk.WithGlobalNodeConfig(fmt.Sprintf(`{
-				"log-level":"%s",
-				"log-display-level":"%s",
-				"proposervm-use-current-height":true,
-				"throttler-inbound-validator-alloc-size":"10737418240",
-				"throttler-inbound-at-large-alloc-size":"10737418240",
-				"throttler-inbound-node-max-processing-msgs":"100000",
-				"throttler-inbound-bandwidth-refill-rate":"1073741824",
-				"throttler-inbound-bandwidth-max-burst-size":"1073741824",
-				"throttler-inbound-cpu-validator-alloc":"100000",
-				"throttler-inbound-disk-validator-alloc":"10737418240000",
-				"throttler-outbound-validator-alloc-size":"10737418240",
-				"throttler-outbound-at-large-alloc-size":"10737418240",
-				"consensus-on-accept-gossip-validator-size":"10",
-				"consensus-on-accept-gossip-peer-size":"10",
-				"network-compression-type":"zstd",
-				"consensus-app-concurrency":"512",
-				"profile-continuous-enabled":true,
-				"profile-continuous-freq":"1m",
-				"http-host":"",
-				"http-allowed-origins": "*",
-				"http-allowed-hosts": "*"
-			}`,
-			avalanchegoLogLevel,
-			avalanchegoLogLevel,
-		)),
-	)
-	cancel()
 	gomega.Expect(err).Should(gomega.BeNil())
 	hutils.Outf(
 		"{{green}}successfully started cluster:{{/}} %s {{green}}subnets:{{/}} %+v\n",
