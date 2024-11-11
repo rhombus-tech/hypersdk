@@ -13,8 +13,8 @@ import (
     "github.com/ava-labs/avalanchego/utils/logging"
     "github.com/bytecodealliance/wasmtime-go/v25"
 
+    "github.com/ava-labs/hypersdk/chain"
     "github.com/ava-labs/hypersdk/codec"
-    // NEW: Import events package
     "github.com/ava-labs/hypersdk/runtime/events"
     "github.com/ava-labs/hypersdk/state"
 )
@@ -24,7 +24,6 @@ var (
     errCannotOverwrite = errors.New("trying to overwrite set field")
 )
 
-// MODIFIED: Added eventManager field
 type WasmRuntime struct {
     log    logging.Logger
     engine *wasmtime.Engine
@@ -35,10 +34,11 @@ type WasmRuntime struct {
     callerInfo map[uintptr]*CallInfo
     linker     *wasmtime.Linker
 
-    // NEW: Event manager reference
+    // Preserved from original
     eventManager *events.Manager
 }
 
+// Original interfaces preserved
 type StateManager interface {
     BalanceManager
     ContractManager
@@ -50,27 +50,16 @@ type BalanceManager interface {
 }
 
 type ContractManager interface {
-    // GetContractState returns the state of the contract at the given address.
     GetContractState(address codec.Address) state.Mutable
-    // GetAccountContract returns the contract ID associated with the given account.
-    // An account represents a specific instance of a contract.
     GetAccountContract(ctx context.Context, account codec.Address) (ContractID, error)
-    // GetContractBytes returns the compiled WASM bytes of the contract with the given ID.
     GetContractBytes(ctx context.Context, contractID ContractID) ([]byte, error)
-    // NewAccountWithContract creates a new account that represents a specific instance of a contract.
     NewAccountWithContract(ctx context.Context, contractID ContractID, accountCreationData []byte) (codec.Address, error)
-    // SetAccountContract associates the given contract ID with the given account.
     SetAccountContract(ctx context.Context, account codec.Address, contractID ContractID) error
-    // SetContractBytes stores the compiled WASM bytes of the contract with the given ID.
     SetContractBytes(ctx context.Context, contractID ContractID, contractBytes []byte) error
 }
 
-// MODIFIED: Updated to initialize event manager
-func NewRuntime(
-    cfg *Config,
-    log logging.Logger,
-) *WasmRuntime {
-    // NEW: Create event manager if events are enabled
+// Preserved original NewRuntime with event initialization
+func NewRuntime(cfg *Config, log logging.Logger) *WasmRuntime {
     var eventManager *events.Manager
     if cfg.EventConfig != nil && cfg.EventConfig.Enabled {
         eventManager = events.NewManager(cfg.EventConfig, nil)
@@ -90,7 +79,6 @@ func NewRuntime(
             }
             return len(id) + len(bytes)
         }),
-        // NEW: Initialize event manager
         eventManager: eventManager,
     }
 
@@ -99,7 +87,6 @@ func NewRuntime(
     hostImports.AddModule(NewStateAccessModule())
     hostImports.AddModule(NewContractModule(runtime))
 
-    // NEW: Add event module if enabled
     if eventManager != nil {
         hostImports.AddModule(events.NewEventModule(eventManager))
     }
@@ -114,12 +101,12 @@ func NewRuntime(
     return runtime
 }
 
-// NEW: Add event-related accessor
+// Preserved original Events accessor
 func (r *WasmRuntime) Events() *events.Manager {
     return r.eventManager
 }
 
-// MODIFIED: Updated CallInfo to include events field
+// Original CallInfo preserved with events
 type CallInfo struct {
     State        StateManager
     Actor        codec.Address
@@ -131,12 +118,11 @@ type CallInfo struct {
     Timestamp    uint64
     Value        uint64
     inst         *ContractInstance
-    // NEW: Event storage
     events       []events.Event
 }
 
+// Original WithDefaults preserved
 func (r *WasmRuntime) WithDefaults(callInfo CallInfo) CallContext {
-    // NEW: Initialize events slice if events are enabled
     if r.eventManager != nil {
         callInfo.events = make([]events.Event, 0)
     }
@@ -159,43 +145,76 @@ func (r *WasmRuntime) getModule(ctx context.Context, callInfo *CallInfo, id []by
     return mod, nil
 }
 
-// MODIFIED: Updated to handle events
-func (r *WasmRuntime) CallContract(ctx context.Context, callInfo *CallInfo) (result []byte, err error) {
+// Updated CallContract to use chain.Result while preserving event functionality
+func (r *WasmRuntime) CallContract(ctx context.Context, callInfo *CallInfo) (*chain.Result, error) {
     contractID, err := callInfo.State.GetAccountContract(ctx, callInfo.Contract)
     if err != nil {
-        return nil, err
+        return &chain.Result{
+            Success: false,
+            Error:   []byte(err.Error()),
+        }, nil
     }
 
-    // NEW: Add event context if enabled
+    // Preserved: Add event context
     if r.eventManager != nil {
         ctx = r.eventManager.WithContext(ctx)
     }
 
     contractModule, err := r.getModule(ctx, callInfo, contractID)
     if err != nil {
-        return nil, err
+        return &chain.Result{
+            Success: false,
+            Error:   []byte(err.Error()),
+        }, nil
     }
+
     inst, err := r.getInstance(contractModule)
     if err != nil {
-        return nil, err
+        return &chain.Result{
+            Success: false,
+            Error:   []byte(err.Error()),
+        }, nil
     }
     callInfo.inst = inst
 
     r.setCallInfo(inst.store, callInfo)
     defer r.deleteCallInfo(inst.store)
 
-    result, err = inst.call(ctx, callInfo)
+    // Execute contract and create result
+    output, err := inst.call(ctx, callInfo)
+    if err != nil {
+        return &chain.Result{
+            Success: false,
+            Error:   []byte(err.Error()),
+        }, nil
+    }
 
-    // NEW: Process any events after successful execution
-    if err == nil && r.eventManager != nil && len(callInfo.events) > 0 {
+    result := &chain.Result{
+        Success: true,
+        Outputs: make([][]byte, 0),
+    }
+
+    if len(output) > 0 {
+        result.Outputs = append(result.Outputs, output)
+    }
+
+    // Preserved: Process events after successful execution
+    if r.eventManager != nil && len(callInfo.events) > 0 {
         for _, evt := range callInfo.events {
-            r.eventManager.Emit(evt)
+            result, err = r.eventManager.EmitWithResult(evt, result)
+            if err != nil {
+                return &chain.Result{
+                    Success: false,
+                    Error:   []byte(err.Error()),
+                }, nil
+            }
         }
     }
 
-    return result, err
+    return result, nil
 }
 
+// Original instance management preserved
 func (r *WasmRuntime) getInstance(contractModule *wasmtime.Module) (*ContractInstance, error) {
     store := wasmtime.NewStore(r.engine)
     store.SetEpochDeadline(1)
@@ -206,6 +225,7 @@ func (r *WasmRuntime) getInstance(contractModule *wasmtime.Module) (*ContractIns
     return &ContractInstance{inst: inst, store: store}, nil
 }
 
+// Original helper functions preserved
 func toMapKey(storeLike wasmtime.Storelike) uintptr {
     return reflect.ValueOf(storeLike.Context()).Pointer()
 }
@@ -222,7 +242,7 @@ func (r *WasmRuntime) deleteCallInfo(storeLike wasmtime.Storelike) {
     delete(r.callerInfo, toMapKey(storeLike))
 }
 
-// NEW: Block handling hooks
+// Original block handling hooks preserved
 func (r *WasmRuntime) OnBlockCommitted(height uint64, timestamp uint64) error {
     if r.eventManager != nil {
         return r.eventManager.OnBlockCommitted(height, timestamp)

@@ -13,15 +13,15 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/logging"
 
+	"github.com/ava-labs/hypersdk/chain"
 	"github.com/ava-labs/hypersdk/codec"
 	"github.com/ava-labs/hypersdk/state"
 	"github.com/ava-labs/hypersdk/x/contracts/test"
-	"github.com/ava-labs/hypersdk/runtime/events"
 )
 
 type TestStateManager struct {
 	ContractManager *ContractStateManager
-	Balances        map[codec.Address]uint64
+	Balances       map[codec.Address]uint64
 }
 
 func (t TestStateManager) GetAccountContract(ctx context.Context, account codec.Address) (ContractID, error) {
@@ -126,18 +126,15 @@ type testRuntime struct {
 	Context      context.Context
 	callContext  CallContext
 	StateManager StateManager
-	// NEW: Add event manager for testing
 	eventManager *events.Manager
 }
 
-// MODIFIED: Update newTestRuntime to support events
 func newTestRuntime(ctx context.Context) *testRuntime {
 	cfg := NewConfig()
-	// NEW: Add event configuration for testing
 	cfg.EventConfig = &events.Config{
-		Enabled:        true,
-		MaxBlockSize:   1000,
-		BufferSize:     100,
+		Enabled:       true,
+		MaxBlockSize:  1000,
+		BufferSize:    100,
 		PongValidators: make([][32]byte, 0),
 	}
 	runtime := NewRuntime(cfg, logging.NoLog{})
@@ -150,7 +147,6 @@ func newTestRuntime(ctx context.Context) *testRuntime {
 			ContractManager: NewContractStateManager(test.NewTestDB(), []byte{}),
 			Balances:       map[codec.Address]uint64{},
 		},
-		// NEW: Get event manager reference from runtime
 		eventManager: runtime.Events(),
 	}
 }
@@ -205,7 +201,7 @@ func (t *testRuntime) WithValue(value uint64) *testRuntime {
 	return t
 }
 
-// NEW: Add helper methods for event testing
+// Helper methods for event testing
 func (t *testRuntime) GetEvents(height uint64) []events.Event {
 	if t.eventManager == nil {
 		return nil
@@ -227,31 +223,8 @@ func (t *testRuntime) RollbackBlock(height uint64) error {
 	return t.eventManager.OnBlockRolledBack(height)
 }
 
-// NEW: Add helper method for event subscription
-func (t *testRuntime) Subscribe(filter events.EventFilter) *events.EventSubscription {
-	if t.eventManager == nil {
-		return nil
-	}
-	return t.eventManager.Subscribe(filter)
-}
-
-// NEW: Add helper method for unsubscribing
-func (t *testRuntime) Unsubscribe(subID uint64) {
-	if t.eventManager != nil {
-		t.eventManager.Unsubscribe(subID)
-	}
-}
-
-// AddContract compiles [contractName] and sets the bytes in the state manager
-func (t *testRuntime) AddContract(contractID ContractID, account codec.Address, contractName string) error {
-	err := t.StateManager.(TestStateManager).CompileAndSetContract(contractID, contractName)
-	if err != nil {
-		return err
-	}
-	return t.StateManager.(TestStateManager).SetAccountContract(t.Context, account, contractID)
-}
-
-func (t *testRuntime) CallContract(contract codec.Address, function string, params []byte) ([]byte, error) {
+// Updated to return chain.Result
+func (t *testRuntime) CallContract(contract codec.Address, function string, params []byte) (*chain.Result, error) {
 	return t.callContext.CallContract(
 		t.Context,
 		&CallInfo{
@@ -260,6 +233,14 @@ func (t *testRuntime) CallContract(contract codec.Address, function string, para
 			FunctionName: function,
 			Params:       params,
 		})
+}
+
+func (t *testRuntime) AddContract(contractID ContractID, account codec.Address, contractName string) error {
+	err := t.StateManager.(TestStateManager).CompileAndSetContract(contractID, contractName)
+	if err != nil {
+		return err
+	}
+	return t.StateManager.(TestStateManager).SetAccountContract(t.Context, account, contractID)
 }
 
 func (t *testRuntime) newTestContract(contract string) (*testContract, error) {
@@ -286,12 +267,14 @@ type testContract struct {
 	Runtime *testRuntime
 }
 
-func (t *testContract) Call(function string, params ...interface{}) ([]byte, error) {
+// Updated to return chain.Result
+func (t *testContract) Call(function string, params ...interface{}) (*chain.Result, error) {
 	args := test.SerializeParams(params...)
 	return t.CallWithSerializedParams(function, args)
 }
 
-func (t *testContract) CallWithSerializedParams(function string, params []byte) ([]byte, error) {
+// Updated to return chain.Result
+func (t *testContract) CallWithSerializedParams(function string, params []byte) (*chain.Result, error) {
 	return t.Runtime.CallContract(
 		t.Address,
 		function,
@@ -348,10 +331,20 @@ func (t *testContract) WithValue(value uint64) *testContract {
 	return t
 }
 
+// Helper function for result deserialization
 func into[T any](data []byte) T {
 	result, err := Deserialize[T](data)
 	if err != nil {
 		panic(err.Error())
 	}
 	return *result
+}
+
+// New helper function for chain.Result
+func getFirstOutput[T any](result *chain.Result) T {
+	if !result.Success || len(result.Outputs) == 0 {
+		var zero T
+		return zero
+	}
+	return into[T](result.Outputs[0])
 }
