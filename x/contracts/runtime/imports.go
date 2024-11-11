@@ -6,11 +6,10 @@ package runtime
 import (
     "github.com/bytecodealliance/wasmtime-go/v25"
     "golang.org/x/exp/maps"
-    // NEW: Import events package if needed for type references
     "github.com/ava-labs/hypersdk/runtime/events"
 )
 
-// NEW: Add event-related fuel costs
+// NEW: Event-related fuel costs
 const (
     emitEventCost        = 1000
     pingCost             = 5000
@@ -161,7 +160,7 @@ func writeOutputToMemory[T any](callInfo *CallInfo, results T, err error) ([]was
     return []wasmtime.Val{wasmtime.ValI32(offset)}, nil
 }
 
-// NEW: Add event module creation function
+// NEW: Create event module
 func NewEventModule(manager *events.Manager) *ImportModule {
     return &ImportModule{
         Name: "event",
@@ -170,18 +169,13 @@ func NewEventModule(manager *events.Manager) *ImportModule {
                 FuelCost: emitEventCost,
                 Function: FunctionNoOutput[RawBytes](
                     func(callInfo *CallInfo, input RawBytes) error {
-                        event := events.Event{
+                        evt := events.Event{
                             Contract:    callInfo.Contract,
                             BlockHeight: callInfo.Height,
                             Timestamp:   callInfo.Timestamp,
                             Data:       input,
                         }
-                        
-                        if err := event.Validate(); err != nil {
-                            return err
-                        }
-
-                        callInfo.events = append(callInfo.events, event)
+                        manager.Emit(evt)
                         return nil
                     },
                 ),
@@ -190,13 +184,13 @@ func NewEventModule(manager *events.Manager) *ImportModule {
                 FuelCost: pingCost,
                 Function: FunctionNoInput[bool](
                     func(callInfo *CallInfo) (bool, error) {
-                        event := events.Event{
+                        evt := events.Event{
                             Contract:    callInfo.Contract,
                             EventType:   events.EventTypePing,
                             BlockHeight: callInfo.Height,
                             Timestamp:   callInfo.Timestamp,
                         }
-                        callInfo.events = append(callInfo.events, event)
+                        manager.Emit(evt)
                         return true, nil
                     },
                 ),
@@ -205,14 +199,24 @@ func NewEventModule(manager *events.Manager) *ImportModule {
                 FuelCost: pongCost,
                 Function: Function[events.PongParams, bool](
                     func(callInfo *CallInfo, params events.PongParams) (bool, error) {
-                        event := events.Event{
+                        err := manager.ValidatePongResponse(
+                            params.PingTimestamp,
+                            params.Signature,
+                            params.PublicKey,
+                            callInfo.Height,
+                        )
+                        if err != nil {
+                            return false, err
+                        }
+
+                        evt := events.Event{
                             Contract:    callInfo.Contract,
                             EventType:   events.EventTypePong,
                             BlockHeight: callInfo.Height,
                             Timestamp:   callInfo.Timestamp,
                             Data:       append(params.Signature, params.PublicKey...),
                         }
-                        callInfo.events = append(callInfo.events, event)
+                        manager.Emit(evt)
                         return true, nil
                     },
                 ),

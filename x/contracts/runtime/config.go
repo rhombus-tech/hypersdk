@@ -6,7 +6,6 @@ package runtime
 import (
     "github.com/ava-labs/avalanchego/utils/units"
     "github.com/bytecodealliance/wasmtime-go/v25"
-    // NEW: Import events package
     "github.com/ava-labs/hypersdk/runtime/events"
 )
 
@@ -40,25 +39,25 @@ var (
     defaultEnableDebugInfo              = false
 )
 
-// MODIFIED: Added EventConfig
+// Config is wrapper for wasmtime.Config
 type Config struct {
     wasmConfig *wasmtime.Config
 
+    // CompileStrategy helps the engine to understand if the files has been precompiled.
     CompileStrategy CompileStrategy `json:"compileStrategy,omitempty" yaml:"compile_strategy,omitempty"`
 
     ContractCacheSize int
 
-    // NEW: Event configuration
+    // Event configuration
     EventConfig *events.Config `json:"eventConfig,omitempty" yaml:"event_config,omitempty"`
 }
 
-// MODIFIED: Updated to include event config
+// NewConfig creates a new engine config with default settings
 func NewConfig() *Config {
     return &Config{
         wasmConfig:        DefaultWasmtimeConfig(),
         ContractCacheSize: defaultContractCacheSize,
-        // NEW: Initialize event config
-        EventConfig:       events.NewConfig(),
+        EventConfig:       events.DefaultConfig(),
     }
 }
 
@@ -192,59 +191,20 @@ func DefaultWasmtimeConfig() *wasmtime.Config {
     return cfg
 }
 
-// MODIFIED: Updated to include event configuration
+// ConfigBuilder methods
 type ConfigBuilder struct {
-    // Configures whether the WebAssembly bulk memory operations proposal will
-    // be enabled for compilation.  This feature gates items such as the
-    // memory.copy instruction, passive data/table segments, etc, being in a
-    // module.
-    // This is false by default.
-    EnableBulkMemory bool `json:"enableBulkMemory,omitempty" yaml:"enable_bulk_memory,omitempty"`
-
-    // Configures whether the WebAssembly multi-value proposal will be enabled for compilation.
-    // This feature gates functions and blocks returning multiple values in a module, for example.
-    // This is false by default.
-    EnableWasmMultiValue bool `json:"enableWasmMultiValue,omitempty" yaml:"enable_wasm_multi_value,omitempty"`
-
-    // Configures whether the WebAssembly reference types proposal will be
-    // enabled for compilation.  This feature gates items such as the externref
-    // and funcref types as well as allowing a module to define multiple tables.
-    // Note that the reference types proposal depends on the bulk memory
-    // proposal.
-    // This is false by default.
+    EnableBulkMemory         bool `json:"enableBulkMemory,omitempty" yaml:"enable_bulk_memory,omitempty"`
+    EnableWasmMultiValue     bool `json:"enableWasmMultiValue,omitempty" yaml:"enable_wasm_multi_value,omitempty"`
     EnableWasmReferenceTypes bool `json:"enableWasmReferenceTypes,omitempty" yaml:"enable_wasm_reference_types,omitempty"`
+    EnableWasmSIMD           bool `json:"enableWasmSIMD,omitempty" yaml:"enable_wasm_simd,omitempty"`
+    EnableDefaultCache       bool `json:"enableDefaultCache,omitempty" yaml:"enable_default_cache,omitempty"`
+    MaxWasmStack            int  `json:"maxWasmStack,omitempty" yaml:"max_wasm_stack,omitempty"`
+    ProfilingStrategy       wasmtime.ProfilingStrategy
 
-    // Configures whether the WebAssembly SIMD proposal will be enabled for
-    // compilation.  The WebAssembly SIMD proposal. This feature gates items
-    // such as the v128 type and all of its operators being in a module. Note
-    // that this does not enable the relaxed simd proposal.
-    // This is false by default.
-    EnableWasmSIMD bool `json:"enableWasmSIMD,omitempty" yaml:"enable_wasm_simd,omitempty"`
-
-    // EnableDefaultCache enables compiled code caching for this `Config` using the default settings
-    // configuration can be found.
-    //
-    // For more information about caching see
-    // https://bytecodealliance.github.io/wasmtime/cli-cache.html
-    // This is false by default.
-    EnableDefaultCache bool `json:"enableDefaultCache,omitempty" yaml:"enable_default_cache,omitempty"`
-
-    // SetMaxWasmStack configures the maximum stack size, in bytes, that JIT code can use.
-    // The amount of stack space that wasm takes is always relative to the first invocation of wasm on the stack.
-    // Recursive calls with imports frames in the middle will all need to fit within this setting.
-    // Note that this setting is not interpreted with 100% precision.
-    // This is 256 MiB by default.
-    MaxWasmStack int `json:"maxWasmStack,omitempty" yaml:"max_wasm_stack,omitempty"`
-
-    // ProfilingStrategy decides what sort of profiling to enable, if any.
-    // Default is `wasmtime.ProfilingStrategyNone`.
-    ProfilingStrategy wasmtime.ProfilingStrategy
-
-    // NEW: Event configuration
-    EventConfigBuilder *events.ConfigBuilder
+    // Event configuration
+    EventConfig            *events.Config
 }
 
-// MODIFIED: Updated to initialize event configuration
 func NewConfigBuilder() *ConfigBuilder {
     return &ConfigBuilder{
         EnableBulkMemory:         DefaultEnableBulkMemory,
@@ -254,8 +214,7 @@ func NewConfigBuilder() *ConfigBuilder {
         MaxWasmStack:             DefaultMaxWasmStack,
         ProfilingStrategy:        DefaultProfilingStrategy,
         EnableDefaultCache:       false,
-        // NEW: Initialize event config builder
-        EventConfigBuilder:       events.NewConfigBuilder(),
+        EventConfig:             events.DefaultConfig(),
     }
 }
 
@@ -365,14 +324,12 @@ func (c *ConfigBuilder) WithPongValidators(validators [][32]byte) *ConfigBuilder
     return c
 }
 
-// MODIFIED: Updated to include event configuration
-func (c *ConfigBuilder) Build() (*Config, error) {
-    cfg := NewConfig()
-    cfg.SetWasmBulkMemory(c.EnableBulkMemory)
-    cfg.SetWasmMultiValue(c.EnableWasmMultiValue)
-    cfg.Set
+	// Add event configuration methods
+func (c *ConfigBuilder) WithEventConfig(cfg *events.Config) *ConfigBuilder {
+    c.EventConfig = cfg
+    return c
+}
 
-	// MODIFIED: Updated to include event configuration
 func (c *ConfigBuilder) Build() (*Config, error) {
     cfg := NewConfig()
     cfg.SetWasmBulkMemory(c.EnableBulkMemory)
@@ -382,13 +339,12 @@ func (c *ConfigBuilder) Build() (*Config, error) {
     cfg.SetMaxWasmStack(c.MaxWasmStack)
     cfg.SetProfiler(c.ProfilingStrategy)
 
-    // NEW: Build event configuration
-    if c.EventConfigBuilder != nil {
-        eventConfig, err := c.EventConfigBuilder.Build()
-        if err != nil {
+    // Set event configuration
+    if c.EventConfig != nil {
+        if err := c.EventConfig.Validate(); err != nil {
             return nil, err
         }
-        cfg.EventConfig = eventConfig
+        cfg.EventConfig = c.EventConfig
     }
 
     if c.EnableDefaultCache {

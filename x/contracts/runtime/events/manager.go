@@ -37,6 +37,11 @@ type Manager struct {
     // Ping-pong state
     activePings     map[uint64]*PingState
     pongValidators  map[string]ed25519.PublicKey
+
+    // NEW: Event processing channels and synchronization
+    eventQueue      chan Event
+    done            chan struct{}
+    wg              sync.WaitGroup
 }
 
 type PingState struct {
@@ -45,13 +50,13 @@ type PingState struct {
     ExpiresAt uint64
 }
 
-// NewManager creates a new event manager
+// MODIFIED: Updated to initialize event processing
 func NewManager(cfg *Config, opts *EventOptions) *Manager {
     if opts == nil {
         opts = DefaultEventOptions()
     }
     
-    return &Manager{
+    m := &Manager{
         blockEvents:    make(map[uint64][]Event),
         subscriptions:  make(map[uint64]*EventSubscription),
         activePings:    make(map[uint64]*PingState),
@@ -59,17 +64,51 @@ func NewManager(cfg *Config, opts *EventOptions) *Manager {
         config:         cfg,
         options:        opts,
         stats:         &EventStats{},
+        // NEW: Initialize event processing channels
+        eventQueue:    make(chan Event, opts.InitialQueueSize),
+        done:         make(chan struct{}),
     }
+
+    // NEW: Start event processor
+    go m.processEvents()
+
+    return m
 }
 
-// Emit adds an event to the manager
+// MODIFIED: Emit is now non-blocking
 func (m *Manager) Emit(evt Event) {
-    m.mu.Lock()
-    defer m.mu.Unlock()
-
     if !m.config.Enabled {
         return
     }
+
+    m.wg.Add(1)
+    go func() {
+        defer m.wg.Done()
+        select {
+        case m.eventQueue <- evt:
+            // Event queued successfully
+        case <-m.done:
+            // Manager is shutting down
+        }
+    }()
+}
+
+// NEW: Background event processor
+func (m *Manager) processEvents() {
+    for {
+        select {
+        case evt := <-m.eventQueue:
+            m.handleEvent(evt)
+        case <-m.done:
+            return
+        }
+    }
+}
+
+// NEW: Handle individual event
+func (m *Manager) handleEvent(evt Event) {
+    m.mu.Lock()
+    defer m.mu.Unlock()
 
     // Add to main events list
     m.events = append(m.events, evt)
@@ -82,25 +121,45 @@ func (m *Manager) Emit(evt Event) {
     m.stats.TotalProcessed++
     m.stats.LastProcessed = uint64(time.Now().Unix())
 
-    // Notify subscribers
+    // Notify subscribers asynchronously
     for _, listener := range m.listeners {
-        select {
-        case listener <- evt:
-        default:
-            // Skip if channel is full
-        }
+        m.notifyListener(listener, evt)
     }
 
-    // Process subscriptions
+    // Process subscriptions asynchronously
     for _, sub := range m.subscriptions {
         if sub.Filter.Matches(&evt) {
-            select {
-            case sub.Channel <- evt:
-            default:
-                // Skip if channel is full
-            }
+            m.notifySubscriber(sub, evt)
         }
     }
+}
+
+// NEW: Asynchronous listener notification
+func (m *Manager) notifyListener(listener chan Event, evt Event) {
+    m.wg.Add(1)
+    go func() {
+        defer m.wg.Done()
+        select {
+        case listener <- evt:
+            // Event delivered
+        case <-m.done:
+            // Manager is shutting down
+        }
+    }()
+}
+
+// NEW: Asynchronous subscriber notification
+func (m *Manager) notifySubscriber(sub *EventSubscription, evt Event) {
+    m.wg.Add(1)
+    go func() {
+        defer m.wg.Done()
+        select {
+        case sub.Channel <- evt:
+            // Event delivered
+        case <-m.done:
+            // Manager is shutting down
+        }
+    }()
 }
 
 // Subscribe creates a new event subscription
@@ -265,3 +324,22 @@ func FromContext(ctx context.Context) *Manager {
 }
 
 type managerKey struct{}
+
+// NEW: Graceful shutdown
+func (m *Manager) Shutdown(ctx context.Context) error {
+    close(m.done)
+    
+    // Wait for all event processing with timeout
+    done := make(chan struct{})
+    go func() {
+        m.wg.Wait()
+        close(done)
+    }()
+
+    select {
+    case <-done:
+        return nil
+    case <-ctx.Done():
+        return ctx.Err()
+    }
+}
