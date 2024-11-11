@@ -6,10 +6,12 @@ package runtime
 import (
     "github.com/bytecodealliance/wasmtime-go/v25"
     "golang.org/x/exp/maps"
+    
+    "github.com/ava-labs/hypersdk/chain"
+    "github.com/ava-labs/hypersdk/codec"
     "github.com/ava-labs/hypersdk/runtime/events"
 )
 
-// NEW: Event-related fuel costs
 const (
     emitEventCost        = 1000
     pingCost             = 5000
@@ -34,7 +36,6 @@ func (i *ImportModule) SetFuelCost(functionName string, fuelCost uint64) bool {
         hostFunction.FuelCost = fuelCost
         i.HostFunctions[functionName] = hostFunction
     }
-
     return ok
 }
 
@@ -50,7 +51,6 @@ func (i *Imports) SetFuelCost(moduleName string, functionName string, fuelCost u
     if module, ok := i.Modules[moduleName]; ok {
         return module.SetFuelCost(functionName, fuelCost)
     }
-
     return false
 }
 
@@ -94,7 +94,7 @@ type HostFunctionType interface {
 
 var typeI32 = wasmtime.NewValType(wasmtime.KindI32)
 
-type Function[T any, U any] func(*CallInfo, T) (U, error)
+type Function[T any, U any] func(*CallInfo, T) (*chain.Result, error)
 
 func (Function[T, U]) wasmType() *wasmtime.FuncType {
     return wasmtime.NewFuncType([]*wasmtime.ValType{typeI32, typeI32}, []*wasmtime.ValType{typeI32})
@@ -103,36 +103,42 @@ func (Function[T, U]) wasmType() *wasmtime.FuncType {
 func (f Function[T, U]) call(callInfo *CallInfo, caller *wasmtime.Caller, vals []wasmtime.Val) ([]wasmtime.Val, *wasmtime.Trap) {
     input, err := getInputFromMemory[T](caller, vals)
     if err != nil {
-        return writeOutputToMemory[interface{}](callInfo, nil, err)
+        return writeOutputToMemory(callInfo, &chain.Result{
+            Success: false,
+            Error:   []byte(err.Error()),
+        }, nil)
     }
-    results, err := f(callInfo, *input)
-    return writeOutputToMemory(callInfo, results, err)
+    result, err := f(callInfo, *input)
+    return writeOutputToMemory(callInfo, result, err)
 }
 
-type FunctionNoInput[T any] func(*CallInfo) (T, error)
+type FunctionNoInput[T any] func(*CallInfo) (*chain.Result, error)
 
 func (FunctionNoInput[T]) wasmType() *wasmtime.FuncType {
     return wasmtime.NewFuncType([]*wasmtime.ValType{}, []*wasmtime.ValType{typeI32})
 }
 
 func (f FunctionNoInput[T]) call(callInfo *CallInfo, _ *wasmtime.Caller, _ []wasmtime.Val) ([]wasmtime.Val, *wasmtime.Trap) {
-    results, err := f(callInfo)
-    return writeOutputToMemory[T](callInfo, results, err)
+    result, err := f(callInfo)
+    return writeOutputToMemory(callInfo, result, err)
 }
 
-type FunctionNoOutput[T any] func(*CallInfo, T) error
+type FunctionNoOutput[T any] func(*CallInfo, T) (*chain.Result, error)
 
 func (FunctionNoOutput[T]) wasmType() *wasmtime.FuncType {
-    return wasmtime.NewFuncType([]*wasmtime.ValType{typeI32, typeI32}, []*wasmtime.ValType{})
+    return wasmtime.NewFuncType([]*wasmtime.ValType{typeI32, typeI32}, []*wasmtime.ValType{typeI32})
 }
 
 func (f FunctionNoOutput[T]) call(callInfo *CallInfo, caller *wasmtime.Caller, vals []wasmtime.Val) ([]wasmtime.Val, *wasmtime.Trap) {
     input, err := getInputFromMemory[T](caller, vals)
     if err != nil {
-        return []wasmtime.Val{}, convertToTrap(err)
+        return writeOutputToMemory(callInfo, &chain.Result{
+            Success: false,
+            Error:   []byte(err.Error()),
+        }, nil)
     }
-    err = f(callInfo, *input)
-    return []wasmtime.Val{}, convertToTrap(err)
+    result, err := f(callInfo, *input)
+    return writeOutputToMemory(callInfo, result, err)
 }
 
 func getInputFromMemory[T any](caller *wasmtime.Caller, vals []wasmtime.Val) (*T, error) {
@@ -145,22 +151,33 @@ func getInputFromMemory[T any](caller *wasmtime.Caller, vals []wasmtime.Val) (*T
     return Deserialize[T](caller.GetExport(MemoryName).Memory().UnsafeData(caller)[offset : offset+length])
 }
 
-func writeOutputToMemory[T any](callInfo *CallInfo, results T, err error) ([]wasmtime.Val, *wasmtime.Trap) {
+func writeOutputToMemory(callInfo *CallInfo, result *chain.Result, err error) ([]wasmtime.Val, *wasmtime.Trap) {
     if err != nil {
-        return nilResult, convertToTrap(err)
+        return writeOutputToMemory(callInfo, &chain.Result{
+            Success: false,
+            Error:   []byte(err.Error()),
+        }, nil)
     }
-    data, err := Serialize(results)
-    if data == nil || err != nil {
-        return nilResult, convertToTrap(err)
+    
+    data, err := codec.Marshal(result)
+    if err != nil {
+        return writeOutputToMemory(callInfo, &chain.Result{
+            Success: false,
+            Error:   []byte(err.Error()),
+        }, nil)
     }
+    
     offset, err := callInfo.inst.writeToMemory(data)
     if err != nil {
-        return nilResult, convertToTrap(err)
+        return writeOutputToMemory(callInfo, &chain.Result{
+            Success: false,
+            Error:   []byte(err.Error()),
+        }, nil)
     }
+    
     return []wasmtime.Val{wasmtime.ValI32(offset)}, nil
 }
 
-// NEW: Create event module
 func NewEventModule(manager *events.Manager) *ImportModule {
     return &ImportModule{
         Name: "event",
@@ -168,7 +185,7 @@ func NewEventModule(manager *events.Manager) *ImportModule {
             "emit": {
                 FuelCost: emitEventCost,
                 Function: FunctionNoOutput[RawBytes](
-                    func(callInfo *CallInfo, input RawBytes) error {
+                    func(callInfo *CallInfo, input RawBytes) (*chain.Result, error) {
                         evt := events.Event{
                             Contract:    callInfo.Contract,
                             BlockHeight: callInfo.Height,
@@ -176,14 +193,17 @@ func NewEventModule(manager *events.Manager) *ImportModule {
                             Data:       input,
                         }
                         manager.Emit(evt)
-                        return nil
+                        return &chain.Result{
+                            Success: true,
+                            Outputs: [][]byte{},
+                        }, nil
                     },
                 ),
             },
             "ping": {
                 FuelCost: pingCost,
                 Function: FunctionNoInput[bool](
-                    func(callInfo *CallInfo) (bool, error) {
+                    func(callInfo *CallInfo) (*chain.Result, error) {
                         evt := events.Event{
                             Contract:    callInfo.Contract,
                             EventType:   events.EventTypePing,
@@ -191,14 +211,17 @@ func NewEventModule(manager *events.Manager) *ImportModule {
                             Timestamp:   callInfo.Timestamp,
                         }
                         manager.Emit(evt)
-                        return true, nil
+                        return &chain.Result{
+                            Success: true,
+                            Outputs: [][]byte{},
+                        }, nil
                     },
                 ),
             },
             "pong": {
                 FuelCost: pongCost,
                 Function: Function[events.PongParams, bool](
-                    func(callInfo *CallInfo, params events.PongParams) (bool, error) {
+                    func(callInfo *CallInfo, params events.PongParams) (*chain.Result, error) {
                         err := manager.ValidatePongResponse(
                             params.PingTimestamp,
                             params.Signature,
@@ -206,7 +229,10 @@ func NewEventModule(manager *events.Manager) *ImportModule {
                             callInfo.Height,
                         )
                         if err != nil {
-                            return false, err
+                            return &chain.Result{
+                                Success: false,
+                                Error:   []byte(err.Error()),
+                            }, nil
                         }
 
                         evt := events.Event{
@@ -217,7 +243,10 @@ func NewEventModule(manager *events.Manager) *ImportModule {
                             Data:       append(params.Signature, params.PublicKey...),
                         }
                         manager.Emit(evt)
-                        return true, nil
+                        return &chain.Result{
+                            Success: true,
+                            Outputs: [][]byte{},
+                        }, nil
                     },
                 ),
             },

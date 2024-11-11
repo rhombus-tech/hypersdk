@@ -11,7 +11,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/bytecodealliance/wasmtime-go/v25"
-
+	"github.com/ava-labs/hypersdk/chain"
 	"github.com/ava-labs/hypersdk/codec"
 )
 
@@ -60,6 +60,9 @@ type CallInfo struct {
 	Value uint64
 
 	inst *ContractInstance
+
+	// Event storage
+	events []Event
 }
 
 func (c *CallInfo) RemainingFuel() uint64 {
@@ -67,7 +70,6 @@ func (c *CallInfo) RemainingFuel() uint64 {
 	if err != nil {
 		return c.Fuel
 	}
-
 	return remaining
 }
 
@@ -77,7 +79,6 @@ func (c *CallInfo) AddFuel(fuel uint64) {
 	if err != nil {
 		return
 	}
-
 	_ = c.inst.store.SetFuel(remaining + fuel)
 }
 
@@ -91,9 +92,7 @@ func (c *CallInfo) ConsumeFuel(fuel uint64) error {
 		return errors.New("out of fuel")
 	}
 
-	err = c.inst.store.SetFuel(remaining - fuel)
-
-	return err
+	return c.inst.store.SetFuel(remaining - fuel)
 }
 
 type ContractInstance struct {
@@ -102,19 +101,28 @@ type ContractInstance struct {
 	result []byte
 }
 
-func (p *ContractInstance) call(ctx context.Context, callInfo *CallInfo) ([]byte, error) {
+func (p *ContractInstance) call(ctx context.Context, callInfo *CallInfo) (*chain.Result, error) {
 	remaining, err := p.store.GetFuel()
 	if err != nil {
-		return nil, err
+		return &chain.Result{
+			Success: false,
+			Error:   []byte(err.Error()),
+		}, nil
 	}
 
 	if err := p.store.SetFuel(remaining + callInfo.Fuel); err != nil {
-		return nil, err
+		return &chain.Result{
+			Success: false,
+			Error:   []byte(err.Error()),
+		}, nil
 	}
 
 	if callInfo.Value > 0 {
 		if err := callInfo.State.TransferBalance(ctx, callInfo.Actor, callInfo.Contract, callInfo.Value); err != nil {
-			return nil, errors.New("insufficient balance")
+			return &chain.Result{
+				Success: false,
+				Error:   []byte("insufficient balance"),
+			}, nil
 		}
 	}
 
@@ -128,23 +136,43 @@ func (p *ContractInstance) call(ctx context.Context, callInfo *CallInfo) ([]byte
 	}
 	paramsBytes, err := Serialize(contractCtx)
 	if err != nil {
-		return nil, err
+		return &chain.Result{
+			Success: false,
+			Error:   []byte(err.Error()),
+		}, nil
 	}
 	paramsBytes = append(paramsBytes, callInfo.Params...)
 
 	// copy params into store linear memory
 	paramsOffset, err := p.writeToMemory(paramsBytes)
 	if err != nil {
-		return nil, err
+		return &chain.Result{
+			Success: false,
+			Error:   []byte(err.Error()),
+		}, nil
 	}
 
 	function := p.inst.GetFunc(p.store, callInfo.FunctionName)
 	if function == nil {
-		return nil, errors.New("this function does not exist")
+		return &chain.Result{
+			Success: false,
+			Error:   []byte("this function does not exist"),
+		}, nil
 	}
-	_, err = function.Call(p.store, paramsOffset)
 
-	return p.result, err
+	_, err = function.Call(p.store, paramsOffset)
+	if err != nil {
+		return &chain.Result{
+			Success: false,
+			Error:   []byte(err.Error()),
+		}, nil
+	}
+
+	// Return successful result with function output
+	return &chain.Result{
+		Success: true,
+		Outputs: [][]byte{p.result},
+	}, nil
 }
 
 func (p *ContractInstance) writeToMemory(data []byte) (int32, error) {
@@ -158,4 +186,23 @@ func (p *ContractInstance) writeToMemory(data []byte) (int32, error) {
 	linearMem := contractMemory.UnsafeData(p.store)
 	copy(linearMem[dataOffset:], data)
 	return dataOffset, nil
+}
+
+// Helper function to wrap errors in chain.Result
+func wrapError(err error) *chain.Result {
+	return &chain.Result{
+		Success: false,
+		Error:   []byte(err.Error()),
+	}
+}
+
+// Helper function to create successful result
+func successResult(output []byte) *chain.Result {
+	if output == nil {
+		output = []byte{}
+	}
+	return &chain.Result{
+		Success: true,
+		Outputs: [][]byte{output},
+	}
 }

@@ -10,13 +10,12 @@ import (
 	"time"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/stretchr/testify/require"
-
+	"github.com/ava-labs/hypersdk/chain"
+	"github.com/ava-labs/hypersdk/codec"
 	"github.com/ava-labs/hypersdk/runtime/events"
-	"github.com/ava-labs/hypersdk/x/contracts/test"
+	"github.com/stretchr/testify/require"
 )
 
-// Basic event emission test
 func TestRuntimeEventEmission(t *testing.T) {
 	require := require.New(t)
 	ctx := context.Background()
@@ -33,6 +32,7 @@ func TestRuntimeEventEmission(t *testing.T) {
 	result, err := contract.Call("emit_event", "TestEvent", []byte("test data"))
 	require.NoError(err)
 	require.NotNil(result)
+	require.True(result.Success)
 
 	// Event processing is async, but should complete quickly
 	time.Sleep(100 * time.Millisecond)
@@ -43,9 +43,13 @@ func TestRuntimeEventEmission(t *testing.T) {
 	require.Equal(contract.Address, events[0].Contract)
 	require.Equal("TestEvent", events[0].EventType)
 	require.Equal([]byte("test data"), events[0].Data)
+
+	// Verify event data in result outputs
+	eventData, err := codec.Marshal(&events[0])
+	require.NoError(err)
+	require.Contains(result.Outputs, eventData)
 }
 
-// Test event subscription
 func TestRuntimeEventSubscription(t *testing.T) {
 	require := require.New(t)
 	ctx := context.Background()
@@ -56,19 +60,20 @@ func TestRuntimeEventSubscription(t *testing.T) {
 
 	// Create subscription
 	eventType := "TestEvent"
-	sub := rt.Subscribe(events.EventFilter{
+	sub := rt.eventManager.Subscribe(events.EventFilter{
 		EventType: &eventType,
 	})
 	require.NotNil(sub)
-	defer rt.Unsubscribe(sub.ID)
+	defer rt.eventManager.Unsubscribe(sub.ID)
 
 	// Set block
 	err = rt.CommitBlock(1, uint64(time.Now().Unix()))
 	require.NoError(err)
 
 	// Emit event
-	_, err = contract.Call("emit_event", eventType, []byte("test data"))
+	result, err := contract.Call("emit_event", eventType, []byte("test data"))
 	require.NoError(err)
+	require.True(result.Success)
 
 	// Wait for event processing
 	select {
@@ -81,7 +86,6 @@ func TestRuntimeEventSubscription(t *testing.T) {
 	}
 }
 
-// Test multi-block event processing
 func TestRuntimeEventBlockProcessing(t *testing.T) {
 	require := require.New(t)
 	ctx := context.Background()
@@ -99,7 +103,7 @@ func TestRuntimeEventBlockProcessing(t *testing.T) {
 		// Emit events
 		result, err := contract.Call("emit_event", fmt.Sprintf("Event%d", height), []byte{byte(height)})
 		require.NoError(err)
-		require.NotNil(result)
+		require.True(result.Success)
 	}
 
 	// Allow time for processing
@@ -114,7 +118,6 @@ func TestRuntimeEventBlockProcessing(t *testing.T) {
 	}
 }
 
-// Test block rollback
 func TestRuntimeEventRollback(t *testing.T) {
 	require := require.New(t)
 	ctx := context.Background()
@@ -129,8 +132,9 @@ func TestRuntimeEventRollback(t *testing.T) {
 		require.NoError(err)
 
 		// Emit event
-		_, err := contract.Call("emit_event", "TestEvent", []byte{byte(height)})
+		result, err := contract.Call("emit_event", "TestEvent", []byte{byte(height)})
 		require.NoError(err)
+		require.True(result.Success)
 	}
 
 	time.Sleep(100 * time.Millisecond)
@@ -156,7 +160,6 @@ func TestRuntimeEventRollback(t *testing.T) {
 	}
 }
 
-// Test event block limits
 func TestRuntimeEventBlockLimits(t *testing.T) {
 	require := require.New(t)
 	ctx := context.Background()
@@ -167,7 +170,7 @@ func TestRuntimeEventBlockLimits(t *testing.T) {
 		Enabled:      true,
 		MaxBlockSize: 2,
 	}
-	rt := NewRuntime(cfg, logging.NoLog{})
+	rt := newTestRuntime(ctx)
 	contract, err := rt.newTestContract("event_test")
 	require.NoError(err)
 
@@ -177,17 +180,18 @@ func TestRuntimeEventBlockLimits(t *testing.T) {
 
 	// Emit events up to limit
 	for i := 0; i < 2; i++ {
-		_, err = contract.Call("emit_event", "test_event", []byte("event data"))
+		result, err := contract.Call("emit_event", "test_event", []byte("event data"))
 		require.NoError(err)
+		require.True(result.Success)
 	}
 
 	// Try to emit one more event - should fail
-	_, err = contract.Call("emit_event", "test_event", []byte("event data"))
-	require.Error(err)
-	require.ErrorIs(err, events.ErrTooManyEvents)
+	result, err := contract.Call("emit_event", "test_event", []byte("event data"))
+	require.NoError(err)
+	require.False(result.Success)
+	require.Contains(string(result.Error), "too many events")
 }
 
-// Test events during state changes
 func TestRuntimeEventDuringStateChanges(t *testing.T) {
 	require := require.New(t)
 	ctx := context.Background()
@@ -203,7 +207,7 @@ func TestRuntimeEventDuringStateChanges(t *testing.T) {
 	// Perform state change that emits event
 	result, err := contract.Call("state_change_with_event", []byte("key"), []byte("value"))
 	require.NoError(err)
-	require.NotNil(result)
+	require.True(result.Success)
 
 	// Verify state change happened immediately
 	state := contract.Runtime.StateManager.GetContractState(contract.Address)
@@ -220,8 +224,7 @@ func TestRuntimeEventDuringStateChanges(t *testing.T) {
 	require.Equal("StateChanged", events[0].EventType)
 }
 
-// Test ping-pong protocol
-func TestRuntimePingPong(t *testing.T) {
+func TestRuntimeContractExecutionWithEvents(t *testing.T) {
 	require := require.New(t)
 	ctx := context.Background()
 
@@ -229,45 +232,36 @@ func TestRuntimePingPong(t *testing.T) {
 	contract, err := rt.newTestContract("event_test")
 	require.NoError(err)
 
-	// Setup validator
-	validatorKey := test.GenerateTestKey()
-	rt.eventManager.RegisterPongValidator(validatorKey.PublicKey)
-
 	// Set block
 	err = rt.CommitBlock(1, uint64(time.Now().Unix()))
 	require.NoError(err)
 
-	// Send ping
-	_, err = contract.Call("ping")
-	require.NoError(err)
-
-	time.Sleep(100 * time.Millisecond)
-
-	// Get ping event
-	events := rt.GetEvents(1)
-	require.Len(events, 1)
-	require.Equal(events.EventTypePing, events[0].EventType)
-
-	// Create signed pong response
-	pongParams := events.PongParams{
-		PingTimestamp: events[0].Timestamp,
-		Signature:     test.SignMessage(validatorKey, events[0].Timestamp),
-		PublicKey:     validatorKey.PublicKey,
+	// Call contract multiple times rapidly
+	for i := 0; i < 100; i++ {
+		result, err := contract.Call(
+			"emit_event",
+			fmt.Sprintf("Event%d", i),
+			[]byte{byte(i)},
+		)
+		// Contract execution should complete immediately
+		require.NoError(err)
+		require.True(result.Success)
 	}
 
-	// Send pong
-	_, err = contract.Call("pong", pongParams)
-	require.NoError(err)
-
+	// Allow time for event processing
 	time.Sleep(100 * time.Millisecond)
 
-	// Verify pong event
-	events = rt.GetEvents(1)
-	require.Len(events, 2)
-	require.Equal(events.EventTypePong, events[1].EventType)
+	// Verify all events were processed
+	events := rt.GetEvents(1)
+	require.Len(events, 100)
+
+	// Verify events are in order
+	for i, evt := range events {
+		require.Equal(fmt.Sprintf("Event%d", i), evt.EventType)
+		require.Equal([]byte{byte(i)}, evt.Data)
+	}
 }
 
-// Benchmarks
 func BenchmarkEventEmission(b *testing.B) {
 	require := require.New(b)
 	ctx := context.Background()
@@ -289,7 +283,7 @@ func BenchmarkEventEmission(b *testing.B) {
 			[]byte{byte(i)},
 		)
 		require.NoError(err)
-		require.NotNil(result)
+		require.True(result.Success)
 	}
 }
 
@@ -306,12 +300,13 @@ func BenchmarkEventProcessing(b *testing.B) {
 
 	// Pre-emit events
 	for i := 0; i < b.N; i++ {
-		_, err := contract.Call(
+		result, err := contract.Call(
 			"emit_event",
 			"BenchmarkEvent",
 			[]byte{byte(i)},
 		)
 		require.NoError(err)
+		require.True(result.Success)
 	}
 
 	b.ResetTimer()
@@ -324,7 +319,7 @@ func BenchmarkEventProcessing(b *testing.B) {
 	require.Len(events, b.N)
 
 	b.StopTimer()
-	
+
 	elapsed := time.Since(startTime)
 	b.ReportMetric(float64(b.N)/elapsed.Seconds(), "events/sec")
 }

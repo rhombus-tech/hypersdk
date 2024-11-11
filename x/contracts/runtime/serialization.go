@@ -9,7 +9,14 @@ import (
 	"io"
 	"reflect"
 
+	"github.com/ava-labs/hypersdk/chain"
+	"github.com/ava-labs/hypersdk/codec"
 	"github.com/near/borsh-go"
+)
+
+var (
+	ErrSerializationFailed = errors.New("serialization failed")
+	ErrDeserializationFailed = errors.New("deserialization failed")
 )
 
 type customSerialize interface {
@@ -65,8 +72,7 @@ func isNil[T any](t T) bool {
 		v.IsNil()
 }
 
-/// Contains some common types that cross the host/guest boundary
-
+// RawBytes handles raw byte data
 type RawBytes []byte
 
 func (r RawBytes) customSerialize(b io.Writer) error {
@@ -79,11 +85,13 @@ func (RawBytes) customDeserialize(data []byte) (*RawBytes, error) {
 	return &rawData, nil
 }
 
+// Result type constants
 const (
 	resultOkPrefix  = byte(1)
 	resultErrPrefix = byte(0)
 )
 
+// Result handles operation results
 type Result[T any, E any] struct {
 	hasError bool
 	value    T
@@ -116,14 +124,14 @@ func (r Result[T, E]) customSerialize(b io.Writer) error {
 
 func (Result[T, E]) customDeserialize(data []byte) (*Result[T, E], error) {
 	if len(data) < 1 {
-		return nil, errors.New("deserialization")
+		return nil, ErrDeserializationFailed
 	}
 	switch data[0] {
 	case resultOkPrefix:
 		{
 			val, err := Deserialize[T](data[1:])
 			if err != nil {
-				return nil, errors.New("deserialization")
+				return nil, ErrDeserializationFailed
 			}
 			return &Result[T, E]{value: *val}, nil
 		}
@@ -131,12 +139,12 @@ func (Result[T, E]) customDeserialize(data []byte) (*Result[T, E], error) {
 		{
 			val, err := Deserialize[E](data[1:])
 			if err != nil {
-				return nil, errors.New("deserialization")
+				return nil, ErrDeserializationFailed
 			}
 			return &Result[T, E]{e: *val, hasError: true}, nil
 		}
 	default:
-		return &Result[T, E]{}, errors.New("deserialization")
+		return &Result[T, E]{}, ErrDeserializationFailed
 	}
 }
 
@@ -148,11 +156,13 @@ func (r Result[T, E]) Err() (E, bool) {
 	return r.e, r.hasError
 }
 
+// Option type constants
 const (
 	optionSomePrefix = byte(1)
 	optionNonePrefix = byte(0)
 )
 
+// Option handles optional values
 type Option[T any] struct {
 	isNone bool
 	value  T
@@ -179,14 +189,14 @@ func (o Option[T]) customSerialize(b io.Writer) error {
 
 func (Option[T]) customDeserialize(data []byte) (*Option[T], error) {
 	if len(data) < 1 {
-		return nil, errors.New("deserialization")
+		return nil, ErrDeserializationFailed
 	}
 	switch data[0] {
 	case optionSomePrefix:
 		{
 			val, err := Deserialize[T](data[1:])
 			if err != nil {
-				return nil, errors.New("deserialization")
+				return nil, ErrDeserializationFailed
 			}
 			return &Option[T]{value: *val}, nil
 		}
@@ -195,7 +205,7 @@ func (Option[T]) customDeserialize(data []byte) (*Option[T], error) {
 			return &Option[T]{isNone: true}, nil
 		}
 	default:
-		return &Option[T]{isNone: true}, errors.New("deserialization")
+		return &Option[T]{isNone: true}, ErrDeserializationFailed
 	}
 }
 
@@ -207,4 +217,56 @@ func (o Option[T]) None() bool {
 	return o.isNone
 }
 
+// Unit represents an empty value
 type Unit struct{}
+
+// Chain Result serialization helpers
+func SerializeResult(result *chain.Result) ([]byte, error) {
+	return codec.Marshal(result)
+}
+
+func DeserializeResult(data []byte) (*chain.Result, error) {
+	result := &chain.Result{}
+	err := codec.Unmarshal(data, result)
+	if err != nil {
+		return nil, ErrDeserializationFailed
+	}
+	return result, nil
+}
+
+// Helper functions for common serialization tasks
+func MustSerialize[T any](value T) []byte {
+	data, err := Serialize(value)
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
+func MustDeserialize[T any](data []byte) T {
+	result, err := Deserialize[T](data)
+	if err != nil {
+		panic(err)
+	}
+	return *result
+}
+
+// Validation helpers
+func ValidateSerializedData(data []byte, maxSize int) error {
+	if len(data) == 0 {
+		return errors.New("empty data")
+	}
+	if maxSize > 0 && len(data) > maxSize {
+		return errors.New("data exceeds maximum size")
+	}
+	return nil
+}
+
+// Size calculation helper
+func CalculateSerializedSize[T any](value T) (int, error) {
+	data, err := Serialize(value)
+	if err != nil {
+		return 0, err
+	}
+	return len(data), nil
+}
