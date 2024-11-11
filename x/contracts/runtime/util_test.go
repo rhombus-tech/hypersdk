@@ -16,6 +16,7 @@ import (
 	"github.com/ava-labs/hypersdk/codec"
 	"github.com/ava-labs/hypersdk/state"
 	"github.com/ava-labs/hypersdk/x/contracts/test"
+	"github.com/ava-labs/hypersdk/runtime/events"
 )
 
 type TestStateManager struct {
@@ -125,6 +126,33 @@ type testRuntime struct {
 	Context      context.Context
 	callContext  CallContext
 	StateManager StateManager
+	// NEW: Add event manager for testing
+	eventManager *events.Manager
+}
+
+// MODIFIED: Update newTestRuntime to support events
+func newTestRuntime(ctx context.Context) *testRuntime {
+	cfg := NewConfig()
+	// NEW: Add event configuration for testing
+	cfg.EventConfig = &events.Config{
+		Enabled:        true,
+		MaxBlockSize:   1000,
+		BufferSize:     100,
+		PongValidators: make([][32]byte, 0),
+	}
+	runtime := NewRuntime(cfg, logging.NoLog{})
+	callContext := runtime.WithDefaults(CallInfo{Fuel: 1000000000})
+
+	return &testRuntime{
+		Context:     ctx,
+		callContext: callContext,
+		StateManager: TestStateManager{
+			ContractManager: NewContractStateManager(test.NewTestDB(), []byte{}),
+			Balances:       map[codec.Address]uint64{},
+		},
+		// NEW: Get event manager reference from runtime
+		eventManager: runtime.Events(),
+	}
 }
 
 func (t *testRuntime) WithStateManager(manager StateManager) *testRuntime {
@@ -177,6 +205,43 @@ func (t *testRuntime) WithValue(value uint64) *testRuntime {
 	return t
 }
 
+// NEW: Add helper methods for event testing
+func (t *testRuntime) GetEvents(height uint64) []events.Event {
+	if t.eventManager == nil {
+		return nil
+	}
+	return t.eventManager.GetBlockEvents(height)
+}
+
+func (t *testRuntime) CommitBlock(height, timestamp uint64) error {
+	if t.eventManager == nil {
+		return nil
+	}
+	return t.eventManager.OnBlockCommitted(height, timestamp)
+}
+
+func (t *testRuntime) RollbackBlock(height uint64) error {
+	if t.eventManager == nil {
+		return nil
+	}
+	return t.eventManager.OnBlockRolledBack(height)
+}
+
+// NEW: Add helper method for event subscription
+func (t *testRuntime) Subscribe(filter events.EventFilter) *events.EventSubscription {
+	if t.eventManager == nil {
+		return nil
+	}
+	return t.eventManager.Subscribe(filter)
+}
+
+// NEW: Add helper method for unsubscribing
+func (t *testRuntime) Unsubscribe(subID uint64) {
+	if t.eventManager != nil {
+		t.eventManager.Unsubscribe(subID)
+	}
+}
+
 // AddContract compiles [contractName] and sets the bytes in the state manager
 func (t *testRuntime) AddContract(contractID ContractID, account codec.Address, contractName string) error {
 	err := t.StateManager.(TestStateManager).CompileAndSetContract(contractID, contractName)
@@ -195,21 +260,6 @@ func (t *testRuntime) CallContract(contract codec.Address, function string, para
 			FunctionName: function,
 			Params:       params,
 		})
-}
-
-func newTestRuntime(ctx context.Context) *testRuntime {
-	callContext := NewRuntime(
-		NewConfig(),
-		logging.NoLog{}).WithDefaults(CallInfo{Fuel: 1000000000})
-
-	return &testRuntime{
-		Context:     ctx,
-		callContext: callContext,
-		StateManager: TestStateManager{
-			ContractManager: NewContractStateManager(test.NewTestDB(), []byte{}),
-			Balances:        map[codec.Address]uint64{},
-		},
-	}
 }
 
 func (t *testRuntime) newTestContract(contract string) (*testContract, error) {
