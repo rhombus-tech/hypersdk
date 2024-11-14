@@ -11,7 +11,6 @@ import (
     "github.com/stretchr/testify/require"
     
     "github.com/ava-labs/hypersdk/chain"
-    "github.com/ava-labs/hypersdk/codec"
 )
 
 func TestImportStatePutGet(t *testing.T) {

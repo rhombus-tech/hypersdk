@@ -4,7 +4,14 @@
 package events
 
 import (
+    "errors"
     "time"
+)
+
+var (
+    ErrInvalidBlockSize   = errors.New("invalid block size")
+    ErrInvalidQueueSize   = errors.New("invalid queue size")
+    ErrInvalidBufferSize  = errors.New("invalid buffer size")
 )
 
 const (
@@ -29,6 +36,9 @@ type Config struct {
 
     // PongValidators contains authorized validator public keys
     PongValidators [][32]byte `json:"pongValidators"`
+
+    // PingTimeout is the timeout duration for ping responses
+    PingTimeout uint64 `json:"pingTimeout"`
 }
 
 func DefaultConfig() *Config {

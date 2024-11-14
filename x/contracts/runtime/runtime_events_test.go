@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/ava-labs/hypersdk/chain"
 	"github.com/ava-labs/hypersdk/codec"
 	"github.com/ava-labs/hypersdk/runtime/events"
 	"github.com/stretchr/testify/require"
@@ -45,7 +43,7 @@ func TestRuntimeEventEmission(t *testing.T) {
 	require.Equal([]byte("test data"), events[0].Data)
 
 	// Verify event data in result outputs
-	eventData, err := codec.Marshal(&events[0])
+	eventData, err := Serialize(&events[0])
 	require.NoError(err)
 	require.Contains(result.Outputs, eventData)
 }

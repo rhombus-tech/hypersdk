@@ -15,7 +15,6 @@ import (
 )
 
 var (
-	ErrSerializationFailed = errors.New("serialization failed")
 	ErrDeserializationFailed = errors.New("deserialization failed")
 )
 
@@ -222,16 +221,16 @@ type Unit struct{}
 
 // Chain Result serialization helpers
 func SerializeResult(result *chain.Result) ([]byte, error) {
-	return codec.Marshal(result)
+    return borsh.Serialize(result)
 }
 
 func DeserializeResult(data []byte) (*chain.Result, error) {
-	result := &chain.Result{}
-	err := codec.Unmarshal(data, result)
-	if err != nil {
-		return nil, ErrDeserializationFailed
-	}
-	return result, nil
+    result := &chain.Result{}
+    err := borsh.Deserialize(result, data)
+    if err != nil {
+        return nil, ErrDeserializationFailed
+    }
+    return result, nil
 }
 
 // Helper functions for common serialization tasks

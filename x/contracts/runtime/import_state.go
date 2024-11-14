@@ -82,10 +82,17 @@ func NewStateAccessModule() *ImportModule {
 							}
 						}
 
-						return &chain.Result{
-							Success: true,
-							Outputs: [][]byte{codec.MustMarshal(true)},
-						}, nil
+						successData, err := Serialize(true)
+if err != nil {
+    return &chain.Result{
+        Success: false,
+        Error:   []byte("failed to serialize result"),
+    }, nil
+}
+return &chain.Result{
+    Success: true,
+    Outputs: [][]byte{successData},
+}, nil
 					},
 				),
 			},
@@ -99,10 +106,17 @@ func NewStateAccessModule() *ImportModule {
 						err := callInfo.State.GetContractState(callInfo.Contract).Remove(ctx, key)
 						if err != nil {
 							if errors.Is(err, database.ErrNotFound) {
-								return &chain.Result{
-									Success: true,
-									Outputs: [][]byte{codec.MustMarshal(true)},
-								}, nil
+								successData, err := Serialize(true)
+if err != nil {
+    return &chain.Result{
+        Success: false,
+        Error:   []byte("failed to serialize result"),
+    }, nil
+}
+return &chain.Result{
+    Success: true,
+    Outputs: [][]byte{successData},
+}, nil
 							}
 							return &chain.Result{
 								Success: false,
@@ -110,10 +124,17 @@ func NewStateAccessModule() *ImportModule {
 							}, nil
 						}
 
-						return &chain.Result{
-							Success: true,
-							Outputs: [][]byte{codec.MustMarshal(true)},
-						}, nil
+						successData, err := Serialize(true)
+if err != nil {
+    return &chain.Result{
+        Success: false,
+        Error:   []byte("failed to serialize result"),
+    }, nil
+}
+return &chain.Result{
+    Success: true,
+    Outputs: [][]byte{successData},
+}, nil
 					},
 				),
 			},
@@ -155,10 +176,17 @@ func NewStateAccessModule() *ImportModule {
 							}
 						}
 
-						return &chain.Result{
-							Success: true,
-							Outputs: [][]byte{codec.MustMarshal(true)},
-						}, nil
+						successData, err := Serialize(true)
+if err != nil {
+    return &chain.Result{
+        Success: false,
+        Error:   []byte("failed to serialize result"),
+    }, nil
+}
+return &chain.Result{
+    Success: true,
+    Outputs: [][]byte{successData},
+}, nil
 					},
 				),
 			},
@@ -190,10 +218,17 @@ func handleStateError(err error) *chain.Result {
 
 // Helper function to create success result with boolean output
 func boolResult(value bool) *chain.Result {
-	return &chain.Result{
-		Success: true,
-		Outputs: [][]byte{codec.MustMarshal(value)},
-	}
+    serializedData, err := Serialize(value)
+    if err != nil {
+        return &chain.Result{
+            Success: false,
+            Error:   []byte("failed to serialize boolean value"),
+        }
+    }
+    return &chain.Result{
+        Success: true,
+        Outputs: [][]byte{serializedData},
+    }
 }
 
 // Helper function to validate key-value pairs

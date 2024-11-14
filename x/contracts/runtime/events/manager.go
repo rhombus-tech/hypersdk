@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/near/borsh-go"
 	"github.com/ava-labs/hypersdk/chain"
 	"github.com/ava-labs/hypersdk/codec"
 )
@@ -17,30 +18,6 @@ type PingState struct {
 	Timestamp uint64
 	Sender    codec.Address
 	ExpiresAt uint64
-}
-
-type EventStats struct {
-	TotalProcessed uint64
-	TotalFiltered  uint64
-	LastProcessed  uint64
-	ErrorCount     uint64
-	DroppedEvents  uint64
-}
-
-type EventOptions struct {
-	BufferSize     int
-	MaxBlockEvents uint64
-	RetryAttempts  int
-	RetryDelay     uint64
-}
-
-func DefaultEventOptions() *EventOptions {
-	return &EventOptions{
-		BufferSize:     DefaultBufferSize,
-		MaxBlockEvents: 1000,
-		RetryAttempts:  3,
-		RetryDelay:     1000,
-	}
 }
 
 // Manager handles event emission, subscription, and validation
@@ -109,7 +86,7 @@ func (m *Manager) EmitWithResult(evt Event, result *chain.Result) (*chain.Result
 	}
 
 	// Serialize event
-	eventData, err := codec.Marshal(&evt)
+	eventData, err := borsh.Serialize(evt)
 	if err != nil {
 		m.stats.ErrorCount++
 		return result, err
@@ -253,7 +230,7 @@ func (m *Manager) GetEventsResult(height uint64) *chain.Result {
 	}
 
 	for _, evt := range events {
-		if eventData, err := codec.Marshal(&evt); err == nil {
+		if eventData, err := borsh.Serialize(evt); err == nil {
 			result.Outputs = append(result.Outputs, eventData)
 		}
 	}

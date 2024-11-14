@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/hypersdk/codec"
 	"github.com/ava-labs/hypersdk/state"
 	"github.com/ava-labs/hypersdk/x/contracts/test"
+	"github.com/ava-labs/hypersdk/runtime/events"
 )
 
 type TestStateManager struct {

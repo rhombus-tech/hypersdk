@@ -64,7 +64,7 @@ func BenchmarkRuntimeModuleCached(b *testing.B) {
 
 	result, err := contract.Call("get_value")
 	require.NoError(err)
-	require.Equal(uint64(0), into[uint64](result))
+	require.Equal(uint64(0), into[uint64](result.Outputs[0]))
 
 	b.ResetTimer()
 
@@ -101,7 +101,7 @@ func BenchmarkRuntimeInstance(b *testing.B) {
 
 	result, err := contract.Call("get_value")
 	require.NoError(err)
-	require.Equal(uint64(0), into[uint64](result))
+	require.Equal(uint64(0), into[uint64](result.Outputs[0]))
 
 	b.ResetTimer()
 
@@ -143,7 +143,7 @@ func BenchmarkRuntimeInstanceCall(b *testing.B) {
 
 	result, err := contract.Call("get_value")
 	require.NoError(err)
-	require.Equal(uint64(0), into[uint64](result))
+	require.Equal(uint64(0), into[uint64](result.Outputs[0]))
 
 	b.ResetTimer()
 
@@ -199,7 +199,7 @@ func BenchmarkRuntimeCallContractBasic(b *testing.B) {
 		_ = result
 
 		b.StopTimer()
-		require.Equal(uint64(0), into[uint64](result))
+		require.Equal(uint64(0), into[uint64](result.Outputs[0]))
 		runtime.GC()
 		b.StartTimer()
 	}
@@ -223,7 +223,7 @@ func BenchmarkRuntimeSendValue(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		result, err := contract.CallWithSerializedParams("send_balance", params)
 		require.NoError(err)
-		require.True(into[bool](result))
+		require.True(into[bool](result.Outputs[0]))
 	}
 }
 
@@ -248,7 +248,7 @@ func BenchmarkRuntimeBasicExternalCalls(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		result, err := contract.CallWithSerializedParams("get_value", params)
 		require.NoError(err)
-		require.Equal(uint64(0), into[uint64](result))
+		require.Equal(uint64(0), into[uint64](result.Outputs[0]))
 	}
 }
 
@@ -354,7 +354,7 @@ func TestRuntimeCallContractBasicAttachValue(t *testing.T) {
 	// calling a contract with a value transfers that amount from the caller to the contract
 	result, err := contract.WithActor(actor).WithValue(4).Call("get_value")
 	require.NoError(err)
-	require.Equal(uint64(0), into[uint64](result))
+	require.Equal(uint64(0), into[uint64](result.Outputs[0]))
 
 	actorBalance, err = contract.Runtime.StateManager.GetBalance(context.Background(), actor)
 	require.NoError(err)
@@ -375,7 +375,7 @@ func TestRuntimeCallContractBasic(t *testing.T) {
 
 	result, err := contract.Call("get_value")
 	require.NoError(err)
-	require.Equal(uint64(0), into[uint64](result))
+	require.Equal(uint64(0), into[uint64](result.Outputs[0]))
 }
 
 type ComplexReturn struct {
@@ -393,5 +393,5 @@ func TestRuntimeCallContractComplexReturn(t *testing.T) {
 
 	result, err := contract.Call("get_value")
 	require.NoError(err)
-	require.Equal(ComplexReturn{Contract: contract.Address, MaxUnits: 1000}, into[ComplexReturn](result))
+	require.Equal(ComplexReturn{Contract: contract.Address, MaxUnits: 1000}, into[ComplexReturn](result.Outputs[0]))
 }

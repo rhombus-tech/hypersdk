@@ -5,7 +5,6 @@ package events
 
 import (
     "github.com/ava-labs/hypersdk/runtime/modules"
-    "github.com/ava-labs/hypersdk/codec"
 )
 
 const (

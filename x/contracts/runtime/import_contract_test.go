@@ -33,12 +33,12 @@ func BenchmarkDeployContract(b *testing.B) {
 			otherContractID[:])
 		require.NoError(err)
 
-		newAccount := into[codec.Address](result)
+		newAccount := into[codec.Address](result.Outputs[0])
 
 		b.StopTimer()
 		result, err = runtime.CallContract(newAccount, "simple_call", nil)
 		require.NoError(err)
-		require.Equal(uint64(0), into[uint64](result))
+		require.Equal(uint64(0), into[uint64](result.Outputs[0]))
 		b.StartTimer()
 	}
 }
@@ -61,11 +61,11 @@ func TestImportContractDeployContract(t *testing.T) {
 		otherContractID[:])
 	require.NoError(err)
 
-	newAccount := into[codec.Address](result)
+	newAccount := into[codec.Address](result.Outputs[0])
 
 	result, err = runtime.CallContract(newAccount, "simple_call", nil)
 	require.NoError(err)
-	require.Equal(uint64(0), into[uint64](result))
+	require.Equal(uint64(0), into[uint64](result.Outputs[0]))
 }
 
 func TestImportContractCallContract(t *testing.T) {
@@ -174,27 +174,27 @@ func TestImportContractCallContractWithParams(t *testing.T) {
 }
 
 func TestImportGetRemainingFuel(t *testing.T) {
-	require := require.New(t)
-	ctx := context.Background()
+    require := require.New(t)
+    ctx := context.Background()
 
-	rt := newTestRuntime(ctx)
-	contract, err := rt.newTestContract("fuel")
-	require.NoError(err)
+    rt := newTestRuntime(ctx)
+    contract, err := rt.newTestContract("fuel")
+    require.NoError(err)
 
-	result, err := contract.Call("get_fuel")
-	require.NoError(err)
-	require.LessOrEqual(into[uint64](result), contract.Runtime.callContext.defaultCallInfo.Fuel)
+    result, err := contract.Call("get_fuel")
+    require.NoError(err)
+    require.LessOrEqual(into[uint64](result.Outputs[0]), contract.Runtime.callContext.defaultCallInfo.Fuel)
 }
 
 func TestImportOutOfFuel(t *testing.T) {
-	require := require.New(t)
-	ctx := context.Background()
+    require := require.New(t)
+    ctx := context.Background()
 
-	rt := newTestRuntime(ctx)
-	contract, err := rt.newTestContract("fuel")
-	require.NoError(err)
+    rt := newTestRuntime(ctx)
+    contract, err := rt.newTestContract("fuel")
+    require.NoError(err)
 
-	result, err := contract.Call("out_of_fuel", contract.Address)
-	require.NoError(err)
-	require.Equal([]byte{byte(OutOfFuel)}, result)
+    result, err := contract.Call("out_of_fuel", contract.Address)
+    require.NoError(err)
+    require.Equal([]byte{byte(OutOfFuel)}, result.Outputs[0])
 }

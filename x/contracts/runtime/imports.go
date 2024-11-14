@@ -8,7 +8,6 @@ import (
     "golang.org/x/exp/maps"
     
     "github.com/ava-labs/hypersdk/chain"
-    "github.com/ava-labs/hypersdk/codec"
     "github.com/ava-labs/hypersdk/runtime/events"
 )
 
@@ -159,13 +158,13 @@ func writeOutputToMemory(callInfo *CallInfo, result *chain.Result, err error) ([
         }, nil)
     }
     
-    data, err := codec.Marshal(result)
-    if err != nil {
-        return writeOutputToMemory(callInfo, &chain.Result{
-            Success: false,
-            Error:   []byte(err.Error()),
-        }, nil)
-    }
+    data, err := Serialize(result)
+if err != nil {
+    return writeOutputToMemory(callInfo, &chain.Result{
+        Success: false,
+        Error:   []byte(err.Error()),
+    }, nil)
+}
     
     offset, err := callInfo.inst.writeToMemory(data)
     if err != nil {

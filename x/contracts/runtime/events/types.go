@@ -136,6 +136,7 @@ type EventStats struct {
     TotalFiltered  uint64
     LastProcessed  uint64
     ErrorCount     uint64
+    DroppedEvents  uint64 
 }
 
 // EventOptions configures event behavior

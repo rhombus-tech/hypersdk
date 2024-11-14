@@ -6,7 +6,6 @@ package runtime
 import (
     "context"
     "errors"
-    "fmt"
     "reflect"
 
     "github.com/ava-labs/avalanchego/cache"
@@ -178,8 +177,8 @@ func (r *WasmRuntime) CallContract(ctx context.Context, callInfo *CallInfo) (*ch
         Outputs: make([][]byte, 0),
     }
 
-    if len(output) > 0 {
-        result.Outputs = append(result.Outputs, output)
+    if len(output.Outputs) > 0 {
+        result.Outputs = append(result.Outputs, output.Outputs...)
     }
 
     // Preserved: Process events after successful execution

@@ -62,9 +62,10 @@ func TestEventSubscription(t *testing.T) {
     ts := newTestSetup(t)
 
     // Create subscription
-    sub := ts.manager.Subscribe(EventFilter{
-        EventType: "TestEvent",
-    })
+    eventType := "TestEvent"
+sub := ts.manager.Subscribe(EventFilter{
+    EventType: &eventType,
+})
     defer ts.manager.Unsubscribe(sub.ID)
 
     // Emit event

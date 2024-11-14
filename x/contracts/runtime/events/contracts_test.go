@@ -3,7 +3,6 @@ package events
 import (
     "testing"
 
-    "github.com/stretchr/testify/require"
 )
 
 const testContractWASM = `

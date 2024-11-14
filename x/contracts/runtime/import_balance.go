@@ -4,117 +4,116 @@
 package runtime
 
 import (
-	"context"
+    "context"
+	"errors"
 
-	"github.com/ava-labs/hypersdk/chain"
-	"github.com/ava-labs/hypersdk/codec"
+    "github.com/ava-labs/hypersdk/chain"
+    "github.com/ava-labs/hypersdk/codec"
 )
 
 const (
-	sendBalanceCost = 10000
-	getBalanceCost  = 10000
+    sendBalanceCost = 10000
+    getBalanceCost  = 10000
 )
 
 type transferBalanceInput struct {
-	To     codec.Address
-	Amount uint64
+    To     codec.Address
+    Amount uint64
 }
 
 func NewBalanceModule() *ImportModule {
-	return &ImportModule{
-		Name: "balance",
-		HostFunctions: map[string]HostFunction{
-			"get": {
-				FuelCost: getBalanceCost,
-				Function: Function[codec.Address, uint64](
-					func(callInfo *CallInfo, address codec.Address) (*chain.Result, error) {
-						ctx, cancel := context.WithCancel(context.Background())
-						defer cancel()
+    return &ImportModule{
+        Name: "balance",
+        HostFunctions: map[string]HostFunction{
+            "get": {
+                FuelCost: getBalanceCost,
+                Function: Function[codec.Address, uint64](
+                    func(callInfo *CallInfo, address codec.Address) (*chain.Result, error) {
+                        ctx, cancel := context.WithCancel(context.Background())
+                        defer cancel()
 
-						balance, err := callInfo.State.GetBalance(ctx, address)
-						if err != nil {
-							return &chain.Result{
-								Success: false,
-								Error:   []byte(err.Error()),
-							}, nil
-						}
+                        balance, err := callInfo.State.GetBalance(ctx, address)
+                        if err != nil {
+                            return &chain.Result{
+                                Success: false,
+                                Error:   []byte(err.Error()),
+                            }, nil
+                        }
 
-						// Serialize the balance
-						balanceBytes, err := codec.Marshal(balance)
-						if err != nil {
-							return &chain.Result{
-								Success: false,
-								Error:   []byte("failed to serialize balance"),
-							}, nil
-						}
+                        // Serialize the balance
+                        balanceBytes, err := Serialize(balance)
+                        if err != nil {
+                            return &chain.Result{
+                                Success: false,
+                                Error:   []byte("failed to serialize balance"),
+                            }, nil
+                        }
 
-						return &chain.Result{
-							Success: true,
-							Outputs: [][]byte{balanceBytes},
-						}, nil
-					},
-				),
-			},
-			"send": {
-				FuelCost: sendBalanceCost,
-				Function: Function[transferBalanceInput, Result[Unit, ContractCallErrorCode]](
-					func(callInfo *CallInfo, input transferBalanceInput) (*chain.Result, error) {
-						ctx, cancel := context.WithCancel(context.Background())
-						defer cancel()
+                        return &chain.Result{
+                            Success: true,
+                            Outputs: [][]byte{balanceBytes},
+                        }, nil
+                    },
+                ),
+            },
+            "send": {
+                FuelCost: sendBalanceCost,
+                Function: Function[transferBalanceInput, Result[Unit, ContractCallErrorCode]](
+                    func(callInfo *CallInfo, input transferBalanceInput) (*chain.Result, error) {
+                        ctx, cancel := context.WithCancel(context.Background())
+                        defer cancel()
 
-						// Attempt to transfer the balance
-						err := callInfo.State.TransferBalance(ctx, callInfo.Contract, input.To, input.Amount)
-						if err != nil {
-							// Check for specific error types
-							if extractedError, ok := ExtractContractCallErrorCode(err); ok {
-								return &chain.Result{
-									Success: false,
-									Error:   []byte(extractedError.String()),
-								}, nil
-							}
-							return &chain.Result{
-								Success: false,
-								Error:   []byte("execution failure"),
-							}, nil
-						}
+                        err := callInfo.State.TransferBalance(ctx, callInfo.Contract, input.To, input.Amount)
+                        if err != nil {
+                            if extractedError, ok := ExtractContractCallErrorCode(err); ok {
+                                return &chain.Result{
+                                    Success: false,
+                                    Error:   []byte(extractedError.String()),
+                                }, nil
+                            }
+                            return &chain.Result{
+                                Success: false,
+                                Error:   []byte("execution failure"),
+                            }, nil
+                        }
 
-						// Create success result for transfer
-						successData, err := codec.Marshal(Ok[Unit, ContractCallErrorCode](Unit{}))
-						if err != nil {
-							return &chain.Result{
-								Success: false,
-								Error:   []byte("failed to serialize result"),
-							}, nil
-						}
+                        // Serialize the success result
+                        successData, err := Serialize(Ok[Unit, ContractCallErrorCode](Unit{}))
+                        if err != nil {
+                            return &chain.Result{
+                                Success: false,
+                                Error:   []byte("failed to serialize result"),
+                            }, nil
+                        }
 
-						return &chain.Result{
-							Success: true,
-							Outputs: [][]byte{successData},
-						}, nil
-					},
-				),
-			},
-		},
-	}
+                        return &chain.Result{
+                            Success: true,
+                            Outputs: [][]byte{successData},
+                        }, nil
+                    },
+                ),
+            },
+        },
+    }
 }
 
 // Helper function to handle balance errors
 func handleBalanceError(err error) *chain.Result {
-	if extractedError, ok := ExtractContractCallErrorCode(err); ok {
-		return &chain.Result{
-			Success: false,
-			Error:   []byte(extractedError.String()),
-		}
-	}
-	return &chain.Result{
-		Success: false,
-		Error:   []byte(err.Error()),
-	}
+    if extractedError, ok := ExtractContractCallErrorCode(err); ok {
+        return &chain.Result{
+            Success: false,
+            Error:   []byte(extractedError.String()),
+        }
+    }
+    return &chain.Result{
+        Success: false,
+        Error:   []byte(err.Error()),
+    }
 }
 
 // Helper function to create success result with amount
 func amountResult(amount uint64) (*chain.Result, error) {
-	amountBytes, err := codec.Marshal(amount)
+	amountBytes, err := Serialize(amount)
 	if err != nil {
 		return &chain.Result{
 			Success: false,
@@ -153,13 +152,13 @@ func CreateTransferResult(amount uint64, from, to codec.Address) *chain.Result {
 		To:     to,
 	}
 
-	transferBytes, err := codec.Marshal(transferData)
-	if err != nil {
-		return &chain.Result{
-			Success: false,
-			Error:   []byte("failed to serialize transfer data"),
-		}
-	}
+	transferBytes, err := Serialize(transferData)
+if err != nil {
+    return &chain.Result{
+        Success: false,
+        Error:   []byte("failed to serialize transfer data"),
+    }
+}
 
 	return &chain.Result{
 		Success: true,
@@ -169,7 +168,7 @@ func CreateTransferResult(amount uint64, from, to codec.Address) *chain.Result {
 
 // CreateBalanceResult creates a chain.Result for a balance query
 func CreateBalanceResult(balance uint64) (*chain.Result, error) {
-	balanceBytes, err := codec.Marshal(balance)
+	balanceBytes, err := Serialize(balance)
 	if err != nil {
 		return &chain.Result{
 			Success: false,

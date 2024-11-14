@@ -12,7 +12,6 @@ import (
 
     "github.com/ava-labs/avalanchego/ids"
     "github.com/ava-labs/avalanchego/utils/logging"
-    "github.com/ava-labs/hypersdk/chain"
     "github.com/ava-labs/hypersdk/codec"
 )
 
@@ -229,7 +228,7 @@ func (m *OffChainEventManager) processBatch(events []*OffChainEvent) {
     for _, event := range events {
         // Store event
         if err := m.storage.Store(event); err != nil {
-            m.log.Error("Failed to store event: %v", err)
+            m.log.Error(fmt.Sprintf("Failed to store event: %v", err))
             continue
         }
 
@@ -279,7 +278,7 @@ func (m *OffChainEventManager) flushOldEvents() {
             // Clean up storage
             for _, event := range events {
                 if err := m.storage.Delete(event.ExecutionID); err != nil {
-                    m.log.Error("Failed to delete old event: %v", err)
+                    m.log.Error(fmt.Sprintf("Failed to delete old event: %v", err))
                 }
             }
         }

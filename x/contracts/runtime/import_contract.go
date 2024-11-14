@@ -6,6 +6,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"golang.org/x/exp/slices"
 
 	"github.com/bytecodealliance/wasmtime-go/v25"
 	"github.com/ava-labs/hypersdk/chain"
@@ -110,10 +111,17 @@ func NewContractModule(r *WasmRuntime) *ImportModule {
 						// needs to clone because this points into the current store's linear memory 
 						// which may be gone when this is read
 						callInfo.inst.result = slices.Clone(input)
-						return &chain.Result{
-							Success: true,
-							Outputs: [][]byte{codec.MustMarshal(true)},
-						}, nil
+						serializedData, err := Serialize(true)
+if err != nil {
+    return &chain.Result{
+        Success: false,
+        Error:   []byte("failed to serialize boolean"),
+    }, nil
+}
+return &chain.Result{
+    Success: true,
+    Outputs: [][]byte{serializedData},
+}, nil
 					}),
 			},
 			"remaining_fuel": {
@@ -121,10 +129,17 @@ func NewContractModule(r *WasmRuntime) *ImportModule {
 				Function: FunctionNoInput[uint64](
 					func(callInfo *CallInfo) (*chain.Result, error) {
 						remaining := callInfo.RemainingFuel()
-						return &chain.Result{
-							Success: true,
-							Outputs: [][]byte{codec.MustMarshal(remaining)},
-						}, nil
+						serializedData, err := Serialize(remaining)
+if err != nil {
+    return &chain.Result{
+        Success: false,
+        Error:   []byte("failed to serialize fuel"),
+    }, nil
+}
+return &chain.Result{
+    Success: true,
+    Outputs: [][]byte{serializedData},
+}, nil
 					}),
 			},
 			"deploy": {
@@ -145,10 +160,17 @@ func NewContractModule(r *WasmRuntime) *ImportModule {
 							}, nil
 						}
 
-						return &chain.Result{
-							Success: true,
-							Outputs: [][]byte{codec.MustMarshal(address)},
-						}, nil
+						serializedData, err := Serialize(address)
+if err != nil {
+    return &chain.Result{
+        Success: false,
+        Error:   []byte("failed to serialize address"),
+    }, nil
+}
+return &chain.Result{
+    Success: true,
+    Outputs: [][]byte{serializedData},
+}, nil
 					}),
 			},
 		},
@@ -225,7 +247,7 @@ func handleContractCallResult(result *chain.Result, remainingFuel uint64) *chain
 	}
 
 	// Add remaining fuel information to successful results
-	fuelBytes, err := codec.Marshal(remainingFuel)
+	fuelBytes, err := Serialize(remainingFuel)
 	if err != nil {
 		return &chain.Result{
 			Success: false,
