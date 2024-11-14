@@ -20,7 +20,6 @@ import (
 )
 
 var (
-    callInfoTypeInfo = reflect.TypeOf(CallInfo{})
     errCannotOverwrite = errors.New("trying to overwrite set field")
 )
 
@@ -104,21 +103,6 @@ func NewRuntime(cfg *Config, log logging.Logger) *WasmRuntime {
 // Preserved original Events accessor
 func (r *WasmRuntime) Events() *events.Manager {
     return r.eventManager
-}
-
-// Original CallInfo preserved with events
-type CallInfo struct {
-    State        StateManager
-    Actor        codec.Address
-    FunctionName string
-    Contract     codec.Address
-    Params       []byte
-    Fuel         uint64
-    Height       uint64
-    Timestamp    uint64
-    Value        uint64
-    inst         *ContractInstance
-    events       []events.Event
 }
 
 // Original WithDefaults preserved
@@ -254,5 +238,19 @@ func (r *WasmRuntime) OnBlockRolledBack(height uint64) error {
     if r.eventManager != nil {
         return r.eventManager.OnBlockRolledBack(height)
     }
+    return nil
+}
+
+func (r *WasmRuntime) Shutdown(ctx context.Context) error {
+    if r.eventManager != nil {
+        if err := r.eventManager.Shutdown(ctx); err != nil {
+            return err
+        }
+    }
+    
+    // Clean up any other resources
+    r.contractCache.Flush()
+    r.callerInfo = make(map[uintptr]*CallInfo)
+    
     return nil
 }

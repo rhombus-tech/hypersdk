@@ -21,6 +21,7 @@ var (
 	ErrInsufficientFunds  = errors.New("insufficient funds")
 	ErrInvalidAddress     = errors.New("invalid address")
 	ErrSerializationFailed = errors.New("serialization failed")
+	ErrCannotOverwrite    = errors.New("trying to overwrite set field")
 )
 
 // convertToTrap converts an error to a wasmtime Trap
@@ -64,12 +65,25 @@ func wrapResultError(format string, args ...interface{}) *chain.Result {
 	}
 }
 
-// successResult creates a successful chain.Result with optional outputs
-func successResult(outputs ...[]byte) *chain.Result {
-	return &chain.Result{
-		Success: true,
-		Outputs: outputs,
-	}
+func CreateSuccessResult(outputs ...[]byte) *chain.Result {
+    if len(outputs) == 0 {
+        return &chain.Result{
+            Success: true,
+            Outputs: [][]byte{},
+        }
+    }
+    
+    // Handle nil output
+    for i, output := range outputs {
+        if output == nil {
+            outputs[i] = []byte{}
+        }
+    }
+    
+    return &chain.Result{
+        Success: true,
+        Outputs: outputs,
+    }
 }
 
 // IsExecutionError checks if an error is a runtime execution error
@@ -162,7 +176,7 @@ func GetResultError(result *chain.Result) string {
 // MergeResults combines multiple chain.Results into one
 func MergeResults(results ...*chain.Result) *chain.Result {
 	if len(results) == 0 {
-		return successResult()
+		return CreateSuccessResult()
 	}
 
 	// If any result failed, return the first failure

@@ -35,20 +35,6 @@ type HostFunctionType interface {
     Call(*CallInfo, *wasmtime.Caller, []wasmtime.Val) ([]wasmtime.Val, *wasmtime.Trap)
 }
 
-// CallInfo provides context for function execution
-type CallInfo struct {
-    State        StateManager
-    Actor        codec.Address
-    Contract     codec.Address
-    FunctionName string
-    Params       []byte
-    Fuel         uint64
-    Height       uint64
-    Timestamp    uint64
-    Value        uint64
-    Instance     *ContractInstance // For internal use
-}
-
 // Function types for different parameter patterns
 type Function[T any, U any] func(*CallInfo, T) (U, error)
 type FunctionNoInput[T any] func(*CallInfo) (T, error)

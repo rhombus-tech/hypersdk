@@ -10,7 +10,6 @@ import (
 const (
     DefaultMaxBlockSize     = uint64(1000)
     DefaultInitialQueueSize = 10000
-    DefaultBufferSize       = 100
     DefaultShutdownTimeout  = 5 * time.Second
 )
 

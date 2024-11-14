@@ -14,32 +14,26 @@ import (
 	"github.com/ava-labs/hypersdk/codec"
 )
 
-var (
-	callInfoTypeInfo = reflect.TypeOf(CallInfo{})
-
-	errCannotOverwrite = errors.New("trying to overwrite set field")
-)
-
 type CallContext struct {
 	r               *WasmRuntime
 	defaultCallInfo CallInfo
 }
 
 func (c CallContext) createCallInfo(callInfo *CallInfo) (*CallInfo, error) {
-	newCallInfo := *callInfo
-	resultInfo := reflect.ValueOf(&newCallInfo)
-	defaults := reflect.ValueOf(c.defaultCallInfo)
-	for i := 0; i < defaults.NumField(); i++ {
-		defaultField := defaults.Field(i)
-		if !defaultField.IsZero() {
-			resultField := resultInfo.Elem().Field(i)
-			if !resultField.IsZero() {
-				return nil, fmt.Errorf("%w %s", errCannotOverwrite, callInfoTypeInfo.Field(i).Name)
-			}
-			resultField.Set(defaultField)
-		}
-	}
-	return &newCallInfo, nil
+    newCallInfo := *callInfo
+    resultInfo := reflect.ValueOf(&newCallInfo)
+    defaults := reflect.ValueOf(c.defaultCallInfo)
+    for i := 0; i < defaults.NumField(); i++ {
+        defaultField := defaults.Field(i)
+        if !defaultField.IsZero() {
+            resultField := resultInfo.Elem().Field(i)
+            if !resultField.IsZero() {
+                return nil, fmt.Errorf("%w %s", ErrCannotOverwrite, callInfoTypeInfo.Field(i).Name)
+            }
+            resultField.Set(defaultField)
+        }
+    }
+    return &newCallInfo, nil
 }
 
 func (c CallContext) CallContract(ctx context.Context, info *CallInfo) (*chain.Result, error) {

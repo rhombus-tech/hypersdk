@@ -14,14 +14,14 @@ import (
     "github.com/ava-labs/avalanchego/utils/logging"
     "github.com/ava-labs/hypersdk/chain"
     "github.com/ava-labs/hypersdk/codec"
-    "github.com/ava-labs/hypersdk/events"
     "github.com/ava-labs/hypersdk/runtime"
+    "github.com/ava-labs/hypersdk/runtime/events"
 )
 
 var (
-    ErrManagerStopped     = errors.New("manager stopped")
-    ErrInvalidConfig      = errors.New("invalid configuration")
-    ErrWorkerUnavailable  = errors.New("no workers available")
+    ErrManagerStopped    = errors.New("manager stopped")
+    ErrInvalidConfig     = errors.New("invalid configuration")
+    ErrWorkerUnavailable = errors.New("no workers available")
 )
 
 // Manager coordinates off-chain worker components
@@ -30,7 +30,6 @@ type Manager struct {
     runtime      *runtime.WasmRuntime
     executor     *Executor
     storage      *LocalStorage
-    eventManager *events.OffChainEventManager
     txSubmitter  *TransactionSubmitter
     log         logging.Logger
 
@@ -40,7 +39,7 @@ type Manager struct {
     workerPool  chan *Worker
 
     // State management
-    chainState  runtime.StateManager
+    chainState   runtime.StateManager
     currentBlock uint64
     blockHash    ids.ID
     lock         sync.RWMutex
@@ -51,6 +50,10 @@ type Manager struct {
 
     // Metrics
     metrics      *ManagerMetrics
+
+    // Event management
+    eventManager *events.Manager
+    eventConfig  *events.Config
 
     // Lifecycle management
     ctx          context.Context
@@ -69,11 +72,11 @@ type ManagerConfig struct {
     // Executor configuration
     ExecutorConfig  *ExecutorConfig
     
-    // Event configuration
-    EventConfig     *events.OffChainConfig
-    
     // Transaction configuration
     TxConfig        *TxSubmitterConfig
+    
+    // Event configuration
+    EventConfig     *events.Config
     
     // Task management
     TaskQueueSize   int
@@ -105,20 +108,23 @@ func NewManager(
 
     ctx, cancel := context.WithCancel(context.Background())
 
+    // Initialize event manager
+    eventManager := events.NewManager(
+        config.EventConfig,
+        &events.EventOptions{
+            BufferSize:     config.TaskQueueSize,
+            MaxBlockEvents: config.EventConfig.MaxBlockSize,
+            RetryAttempts: config.MaxRetries,
+            RetryDelay:    config.RetryDelay,
+        },
+    )
+
     // Initialize storage
     storage, err := NewLocalStorage(config.StorageConfig, log)
     if err != nil {
         cancel()
         return nil, fmt.Errorf("failed to initialize storage: %w", err)
     }
-
-    // Initialize event manager
-    eventManager := events.NewOffChainEventManager(
-        runtime.Events(),
-        config.EventConfig,
-        NewEventStorage(storage),
-        log,
-    )
 
     // Initialize transaction submitter
     txSubmitter := NewTransactionSubmitter(
@@ -133,8 +139,9 @@ func NewManager(
         runtime:      runtime,
         chainState:   chainState,
         storage:      storage,
-        eventManager: eventManager,
         txSubmitter:  txSubmitter,
+        eventManager: eventManager,
+        eventConfig:  config.EventConfig,
         log:         log,
         config:      config,
         workerPool:  make(chan *Worker, config.WorkerCount),
@@ -166,24 +173,27 @@ func NewManager(
 func (m *Manager) Start() error {
     m.log.Info("Starting off-chain manager")
 
-    // Start components
-    if err := m.storage.Start(); err != nil {
-        return fmt.Errorf("failed to start storage: %w", err)
-    }
-
+    // Start event manager
     if err := m.eventManager.Start(); err != nil {
         return fmt.Errorf("failed to start event manager: %w", err)
     }
 
+    // Start storage
+    if err := m.storage.Start(); err != nil {
+        return fmt.Errorf("failed to start storage: %w", err)
+    }
+
+    // Start transaction submitter
     if err := m.txSubmitter.Start(); err != nil {
         return fmt.Errorf("failed to start transaction submitter: %w", err)
     }
 
+    // Start executor
     if err := m.executor.Start(); err != nil {
         return fmt.Errorf("failed to start executor: %w", err)
     }
 
-    // Start worker pool
+    // Start workers
     for _, worker := range m.workers {
         if err := worker.Start(); err != nil {
             return fmt.Errorf("failed to start worker: %w", err)
@@ -264,20 +274,11 @@ func (m *Manager) UpdateBlock(height uint64, hash ids.ID) {
     for _, worker := range m.workers {
         worker.UpdateBlock(height, hash)
     }
-}
 
-// Internal methods
-
-func (m *Manager) initializeWorkers() error {
-    m.workers = make([]*Worker, m.config.WorkerCount)
-    for i := 0; i < m.config.WorkerCount; i++ {
-        worker, err := NewWorker(m, m.config.WorkerConfig, m.log)
-        if err != nil {
-            return fmt.Errorf("failed to create worker %d: %w", i, err)
-        }
-        m.workers[i] = worker
+    // Update event manager
+    if err := m.eventManager.OnBlockCommitted(height, uint64(time.Now().Unix())); err != nil {
+        m.log.Error("Failed to update event manager block: %v", err)
     }
-    return nil
 }
 
 func (m *Manager) processTaskQueue() {
@@ -334,13 +335,18 @@ func (m *Manager) handleResult(result Result) {
     start := time.Now()
 
     // Process events
-    for _, event := range result.Events {
-        if err := m.eventManager.Emit(event); err != nil {
-            m.log.Error("Failed to emit event: %v", err)
+    if result.Output != nil && result.Output.Success {
+        for _, eventData := range result.Output.Outputs {
+            var evt events.Event
+            if err := codec.Unmarshal(eventData, &evt); err == nil {
+                if err := m.eventManager.Emit(evt); err != nil {
+                    m.log.Error("Failed to emit event: %v", err)
+                }
+            }
         }
     }
 
-    // Submit transactions
+    // Process transactions
     for _, tx := range result.GeneratedTxs {
         if err := m.txSubmitter.Submit(tx); err != nil {
             m.log.Error("Failed to submit transaction: %v", err)
@@ -353,6 +359,13 @@ func (m *Manager) handleResult(result Result) {
 }
 
 func (m *Manager) validateTask(task Task) error {
+    m.lock.RLock()
+    defer m.lock.RUnlock()
+
+    if task.BlockContext.Height > m.currentBlock {
+        return ErrInvalidBlockHeight
+    }
+
     if task.Contract == codec.EmptyAddress {
         return errors.New("invalid contract address")
     }
@@ -364,8 +377,24 @@ func (m *Manager) validateTask(task Task) error {
     return nil
 }
 
-// Metrics management
+func (m *Manager) initializeWorkers() error {
+    m.workers = make([]*Worker, m.config.WorkerCount)
+    for i := 0; i < m.config.WorkerCount; i++ {
+        worker, err := NewWorker(m, m.config.WorkerConfig, m.log)
+        if err != nil {
+            return fmt.Errorf("failed to create worker %d: %w", i, err)
+        }
+        m.workers[i] = worker
+    }
+    return nil
+}
 
+// Events returns the event manager
+func (m *Manager) Events() *events.Manager {
+    return m.eventManager
+}
+
+// Metrics management
 func (m *Manager) updateMetrics(scheduled bool, txCount, eventCount int) {
     m.metrics.lock.Lock()
     defer m.metrics.lock.Unlock()
@@ -384,7 +413,6 @@ func (m *Manager) updateLatency(duration time.Duration) {
     m.metrics.lock.Lock()
     defer m.metrics.lock.Unlock()
 
-    // Simple moving average
     if m.metrics.TasksCompleted > 0 {
         m.metrics.AverageLatency = (m.metrics.AverageLatency + duration) / 2
     } else {
@@ -392,15 +420,21 @@ func (m *Manager) updateLatency(duration time.Duration) {
     }
 }
 
-// GetMetrics returns current manager metrics
 func (m *Manager) GetMetrics() ManagerMetrics {
     m.metrics.lock.Lock()
     defer m.metrics.lock.Unlock()
     return *m.metrics
 }
 
-// Configuration validation
 func validateConfig(config *ManagerConfig) error {
+    if config.EventConfig == nil {
+        return fmt.Errorf("event config is required")
+    }
+
+    if err := config.EventConfig.Validate(); err != nil {
+        return fmt.Errorf("invalid event config: %w", err)
+    }
+
     if config.WorkerCount <= 0 {
         return fmt.Errorf("%w: invalid worker count", ErrInvalidConfig)
     }

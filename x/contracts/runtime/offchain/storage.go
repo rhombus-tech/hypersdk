@@ -39,6 +39,7 @@ const (
     // Prefix constants
     namespacePrefix  byte = 0x00
     metadataPrefix   byte = 0x01
+    coordinationPrefix byte = 0x02 
     
     // Metadata keys
     lastGCKey        = "last_gc"
@@ -731,4 +732,75 @@ func splitCompoundKey(key []byte) ([][]byte, error) {
         key = key[length:]
     }
     return parts, nil
+}
+
+// Coordination storage methods
+type CoordinationState struct {
+    WorkerID     WorkerID
+    PartnerID    WorkerID
+    TaskID       string
+    Status       string
+    LastUpdate   time.Time
+    Metadata     []byte
+}
+
+// Store coordination state
+func (ls *LocalStorage) StoreCoordinationState(state *CoordinationState) error {
+    key := makeCoordinationKey(state.WorkerID, state.TaskID)
+    data, err := codec.Marshal(state)
+    if err != nil {
+        return fmt.Errorf("failed to marshal coordination state: %w", err)
+    }
+
+    return ls.Put("coordination", key, data)
+}
+
+// Get coordination state
+func (ls *LocalStorage) GetCoordinationState(workerID WorkerID, taskID string) (*CoordinationState, error) {
+    key := makeCoordinationKey(workerID, taskID)
+    data, err := ls.Get("coordination", key)
+    if err != nil {
+        return nil, err
+    }
+
+    var state CoordinationState
+    if err := codec.Unmarshal(data, &state); err != nil {
+        return nil, fmt.Errorf("failed to unmarshal coordination state: %w", err)
+    }
+
+    return &state, nil
+}
+
+// Helper for making coordination keys
+func makeCoordinationKey(workerID WorkerID, taskID string) []byte {
+    return makeCompoundKey(
+        []byte(workerID),
+        []byte(taskID),
+    )
+}
+
+// List active coordinations for a worker
+func (ls *LocalStorage) ListActiveCoordinations(workerID WorkerID) ([]*CoordinationState, error) {
+    prefix := []byte(workerID)
+    keys, err := ls.List("coordination", prefix)
+    if err != nil {
+        return nil, err
+    }
+
+    var states []*CoordinationState
+    for _, key := range keys {
+        state, err := ls.GetCoordinationState(workerID, string(key))
+        if err != nil {
+            continue
+        }
+        states = append(states, state)
+    }
+
+    return states, nil
+}
+
+// Delete coordination state
+func (ls *LocalStorage) DeleteCoordinationState(workerID WorkerID, taskID string) error {
+    key := makeCoordinationKey(workerID, taskID)
+    return ls.Delete("coordination", key)
 }

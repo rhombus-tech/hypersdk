@@ -8,16 +8,22 @@ import "C"
 import (
 	"context"
 	"errors"
+	"reflect"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/bytecodealliance/wasmtime-go/v25"
 	"github.com/ava-labs/hypersdk/chain"
 	"github.com/ava-labs/hypersdk/codec"
+	"github.com/ava-labs/hypersdk/runtime/events"
 )
 
 const (
 	AllocName  = "alloc"
 	MemoryName = "memory"
+)
+
+var (
+	callInfoTypeInfo = reflect.TypeOf(CallInfo{})
 )
 
 type ContractID []byte
@@ -62,7 +68,7 @@ type CallInfo struct {
 	inst *ContractInstance
 
 	// Event storage
-	events []Event
+    events []events.Event 
 }
 
 func (c *CallInfo) RemainingFuel() uint64 {
@@ -197,12 +203,12 @@ func wrapError(err error) *chain.Result {
 }
 
 // Helper function to create successful result
-func successResult(output []byte) *chain.Result {
-	if output == nil {
-		output = []byte{}
-	}
-	return &chain.Result{
-		Success: true,
-		Outputs: [][]byte{output},
-	}
+func createSingleOutputResult(output []byte) *chain.Result {
+    if output == nil {
+        output = []byte{}
+    }
+    return &chain.Result{
+        Success: true,
+        Outputs: [][]byte{output},
+    }
 }

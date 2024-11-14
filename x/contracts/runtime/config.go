@@ -202,6 +202,7 @@ type ConfigBuilder struct {
     ProfilingStrategy       wasmtime.ProfilingStrategy
 
     // Event configuration
+    EventConfigBuilder      *events.ConfigBuilder
     EventConfig            *events.Config
 }
 
@@ -287,26 +288,29 @@ func (c *ConfigBuilder) WithDefaultCache(enabled bool) *ConfigBuilder {
 func (c *ConfigBuilder) WithEventConfig(eventConfig *events.Config) *ConfigBuilder {
     if eventConfig != nil {
         c.EventConfigBuilder = &events.ConfigBuilder{
-            Enabled:       eventConfig.Enabled,
-            MaxBlockSize:  eventConfig.MaxBlockSize,
-            PingTimeout:   eventConfig.PingTimeout,
+            Enabled:         eventConfig.Enabled,
+            MaxBlockSize:    eventConfig.MaxBlockSize,
+            PingTimeout:     eventConfig.PingTimeout,
             PongValidators: eventConfig.PongValidators,
         }
+        c.EventConfig = eventConfig // Store the original config as well
     }
     return c
 }
 
 func (c *ConfigBuilder) WithEvents(enabled bool) *ConfigBuilder {
-    if c.EventConfigBuilder != nil {
-        c.EventConfigBuilder.WithEnabled(enabled)
+    if c.EventConfigBuilder == nil {
+        c.EventConfigBuilder = &events.ConfigBuilder{}
     }
+    c.EventConfigBuilder.Enabled = enabled
     return c
 }
 
 func (c *ConfigBuilder) WithMaxEventBlockSize(size uint64) *ConfigBuilder {
-    if c.EventConfigBuilder != nil {
-        c.EventConfigBuilder.WithMaxBlockSize(size)
+    if c.EventConfigBuilder == nil {
+        c.EventConfigBuilder = &events.ConfigBuilder{}
     }
+    c.EventConfigBuilder.MaxBlockSize = size
     return c
 }
 
@@ -321,12 +325,6 @@ func (c *ConfigBuilder) WithPongValidators(validators [][32]byte) *ConfigBuilder
     if c.EventConfigBuilder != nil {
         c.EventConfigBuilder.WithPongValidators(validators)
     }
-    return c
-}
-
-	// Add event configuration methods
-func (c *ConfigBuilder) WithEventConfig(cfg *events.Config) *ConfigBuilder {
-    c.EventConfig = cfg
     return c
 }
 
