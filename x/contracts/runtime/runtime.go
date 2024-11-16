@@ -7,15 +7,16 @@ import (
     "context"
     "errors"
     "reflect"
+    "time"
 
     "github.com/ava-labs/avalanchego/cache"
     "github.com/ava-labs/avalanchego/utils/logging"
     "github.com/bytecodealliance/wasmtime-go/v25"
-
+    
     "github.com/ava-labs/hypersdk/chain"
     "github.com/ava-labs/hypersdk/codec"
     "github.com/ava-labs/hypersdk/runtime/events"
-    "github.com/ava-labs/hypersdk/state"
+    "github.com/ava-labs/hypersdk/runtime/timechain"
 )
 
 var (
@@ -23,40 +24,21 @@ var (
 )
 
 type WasmRuntime struct {
-    log    logging.Logger
-    engine *wasmtime.Engine
-    cfg    *Config
-
+    log           logging.Logger
+    engine        *wasmtime.Engine
+    cfg           *Config
     contractCache cache.Cacher[string, *wasmtime.Module]
+    callerInfo    map[uintptr]*CallInfo
+    linker        *wasmtime.Linker
 
-    callerInfo map[uintptr]*CallInfo
-    linker     *wasmtime.Linker
+    // Event management
+    eventManager  *events.Manager
 
-    // Preserved from original
-    eventManager *events.Manager
+    // TimeChain integration
+    timechain     *timechain.TimeChain
 }
 
-// Original interfaces preserved
-type StateManager interface {
-    BalanceManager
-    ContractManager
-}
-
-type BalanceManager interface {
-    GetBalance(ctx context.Context, address codec.Address) (uint64, error)
-    TransferBalance(ctx context.Context, from codec.Address, to codec.Address, amount uint64) error
-}
-
-type ContractManager interface {
-    GetContractState(address codec.Address) state.Mutable
-    GetAccountContract(ctx context.Context, account codec.Address) (ContractID, error)
-    GetContractBytes(ctx context.Context, contractID ContractID) ([]byte, error)
-    NewAccountWithContract(ctx context.Context, contractID ContractID, accountCreationData []byte) (codec.Address, error)
-    SetAccountContract(ctx context.Context, account codec.Address, contractID ContractID) error
-    SetContractBytes(ctx context.Context, contractID ContractID, contractBytes []byte) error
-}
-
-// Preserved original NewRuntime with event initialization
+// NewRuntime creates a new WASM runtime instance
 func NewRuntime(cfg *Config, log logging.Logger) *WasmRuntime {
     var eventManager *events.Manager
     if cfg.EventConfig != nil && cfg.EventConfig.Enabled {
@@ -66,10 +48,10 @@ func NewRuntime(cfg *Config, log logging.Logger) *WasmRuntime {
     hostImports := NewImports()
 
     runtime := &WasmRuntime{
-        log:        log,
-        cfg:        cfg,
-        engine:     wasmtime.NewEngineWithConfig(cfg.wasmConfig),
-        callerInfo: map[uintptr]*CallInfo{},
+        log:           log,
+        cfg:           cfg,
+        engine:        wasmtime.NewEngineWithConfig(cfg.wasmConfig),
+        callerInfo:    map[uintptr]*CallInfo{},
         contractCache: cache.NewSizedLRU(cfg.ContractCacheSize, func(id string, mod *wasmtime.Module) int {
             bytes, err := mod.Serialize()
             if err != nil {
@@ -80,13 +62,43 @@ func NewRuntime(cfg *Config, log logging.Logger) *WasmRuntime {
         eventManager: eventManager,
     }
 
+    // Initialize TimeChain if enabled
+if cfg.TimeChain != nil && cfg.TimeChain.Enabled {
+    roughtime := timechain.NewRoughtimeClient(cfg.TimeChain.MinServers)
+    
+    // Initialize verifier with configured tolerance
+    verifier := timechain.NewVerifier(
+        cfg.TimeChain.VerificationTolerance,
+        cfg.TimeChain.WindowDuration, // Use as maxAge
+        roughtime,
+    )
+    
+    sequence := timechain.NewTimeSequence(
+        roughtime,
+        cfg.TimeChain.WindowDuration,
+        verifier,
+    )
+    
+    runtime.timechain = &timechain.TimeChain{
+        Sequence:    sequence,
+        MerkleTree:  timechain.NewTimeMerkleTree(),
+        Roughtime:   roughtime,
+        Verifier:    verifier,
+    }
+
+    // Start background time synchronization if configured
+    if err := runtime.timechain.Start(context.Background()); err != nil {
+        log.Error("Failed to start TimeChain: %v", err)
+    }
+}
+
     hostImports.AddModule(NewLogModule())
     hostImports.AddModule(NewBalanceModule())
     hostImports.AddModule(NewStateAccessModule())
     hostImports.AddModule(NewContractModule(runtime))
 
     if eventManager != nil {
-        hostImports.AddModule(events.NewEventModule(eventManager))
+        hostImports.AddModule(NewEventModule(eventManager))
     }
 
     linker, err := hostImports.createLinker(runtime)
@@ -99,17 +111,21 @@ func NewRuntime(cfg *Config, log logging.Logger) *WasmRuntime {
     return runtime
 }
 
-// Preserved original Events accessor
+// Events returns the event manager
 func (r *WasmRuntime) Events() *events.Manager {
     return r.eventManager
 }
 
-// Original WithDefaults preserved
+// WithDefaults creates a new call context with default values
 func (r *WasmRuntime) WithDefaults(callInfo CallInfo) CallContext {
     if r.eventManager != nil {
         callInfo.events = make([]events.Event, 0)
     }
-    return CallContext{r: r, defaultCallInfo: callInfo}
+
+    return CallContext{
+        r:               r,
+        defaultCallInfo: callInfo,
+    }
 }
 
 func (r *WasmRuntime) getModule(ctx context.Context, callInfo *CallInfo, id []byte) (*wasmtime.Module, error) {
@@ -128,7 +144,7 @@ func (r *WasmRuntime) getModule(ctx context.Context, callInfo *CallInfo, id []by
     return mod, nil
 }
 
-// Updated CallContract to use chain.Result while preserving event functionality
+// CallContract executes a contract with given call info
 func (r *WasmRuntime) CallContract(ctx context.Context, callInfo *CallInfo) (*chain.Result, error) {
     contractID, err := callInfo.State.GetAccountContract(ctx, callInfo.Contract)
     if err != nil {
@@ -138,9 +154,37 @@ func (r *WasmRuntime) CallContract(ctx context.Context, callInfo *CallInfo) (*ch
         }, nil
     }
 
-    // Preserved: Add event context
+    // Add event context
     if r.eventManager != nil {
         ctx = r.eventManager.WithContext(ctx)
+    }
+
+    // Get verified time if TimeChain enabled
+    if r.timechain != nil {
+        verifiedTime, proof, err := r.timechain.Roughtime.GetVerifiedTimeWithProof()
+        if err != nil {
+            return &chain.Result{
+                Success: false,
+                Error:   []byte(fmt.Sprintf("time verification failed: %v", err)),
+            }, nil
+        }
+        
+        callInfo.Timestamp = uint64(verifiedTime.Unix())
+        
+        // Add to time sequence
+        entry := &timechain.SequenceEntry{
+            VerifiedTime:  verifiedTime,
+            TimeProof:     proof,
+            SequenceNum:   r.timechain.GetNextSequenceNum(),
+            Transactions:  []timechain.Transaction{}, // Add relevant transactions
+        }
+        
+        if err := r.timechain.Sequence.AddToSequence(entry); err != nil {
+            return &chain.Result{
+                Success: false,
+                Error:   []byte(fmt.Sprintf("time sequence failed: %v", err)),
+            }, nil
+        }
     }
 
     contractModule, err := r.getModule(ctx, callInfo, contractID)
@@ -163,7 +207,6 @@ func (r *WasmRuntime) CallContract(ctx context.Context, callInfo *CallInfo) (*ch
     r.setCallInfo(inst.store, callInfo)
     defer r.deleteCallInfo(inst.store)
 
-    // Execute contract and create result
     output, err := inst.call(ctx, callInfo)
     if err != nil {
         return &chain.Result{
@@ -181,7 +224,7 @@ func (r *WasmRuntime) CallContract(ctx context.Context, callInfo *CallInfo) (*ch
         result.Outputs = append(result.Outputs, output.Outputs...)
     }
 
-    // Preserved: Process events after successful execution
+    // Process events
     if r.eventManager != nil && len(callInfo.events) > 0 {
         for _, evt := range callInfo.events {
             result, err = r.eventManager.EmitWithResult(evt, result)
@@ -197,7 +240,7 @@ func (r *WasmRuntime) CallContract(ctx context.Context, callInfo *CallInfo) (*ch
     return result, nil
 }
 
-// Original instance management preserved
+// getInstance creates a new contract instance
 func (r *WasmRuntime) getInstance(contractModule *wasmtime.Module) (*ContractInstance, error) {
     store := wasmtime.NewStore(r.engine)
     store.SetEpochDeadline(1)
@@ -208,7 +251,6 @@ func (r *WasmRuntime) getInstance(contractModule *wasmtime.Module) (*ContractIns
     return &ContractInstance{inst: inst, store: store}, nil
 }
 
-// Original helper functions preserved
 func toMapKey(storeLike wasmtime.Storelike) uintptr {
     return reflect.ValueOf(storeLike.Context()).Pointer()
 }
@@ -225,7 +267,7 @@ func (r *WasmRuntime) deleteCallInfo(storeLike wasmtime.Storelike) {
     delete(r.callerInfo, toMapKey(storeLike))
 }
 
-// Original block handling hooks preserved
+// OnBlockCommitted handles new block commitments
 func (r *WasmRuntime) OnBlockCommitted(height uint64, timestamp uint64) error {
     if r.eventManager != nil {
         return r.eventManager.OnBlockCommitted(height, timestamp)
@@ -233,6 +275,7 @@ func (r *WasmRuntime) OnBlockCommitted(height uint64, timestamp uint64) error {
     return nil
 }
 
+// OnBlockRolledBack handles block rollbacks
 func (r *WasmRuntime) OnBlockRolledBack(height uint64) error {
     if r.eventManager != nil {
         return r.eventManager.OnBlockRolledBack(height)
@@ -240,16 +283,40 @@ func (r *WasmRuntime) OnBlockRolledBack(height uint64) error {
     return nil
 }
 
+// Shutdown cleans up runtime resources
 func (r *WasmRuntime) Shutdown(ctx context.Context) error {
     if r.eventManager != nil {
         if err := r.eventManager.Shutdown(ctx); err != nil {
             return err
         }
     }
+
+    // Clean up TimeChain
+    if r.timechain != nil {
+        if err := r.timechain.Shutdown(ctx); err != nil {
+            return err
+        }
+    }
     
-    // Clean up any other resources
+    // Clean up other resources
     r.contractCache.Flush()
     r.callerInfo = make(map[uintptr]*CallInfo)
     
     return nil
+}
+
+// GetTimeSequence returns the current time sequence
+func (r *WasmRuntime) GetTimeSequence() ([]*timechain.SequenceEntry, error) {
+    if r.timechain == nil {
+        return nil, errors.New("timechain not enabled")
+    }
+    return r.timechain.Sequence.GetSequence(), nil
+}
+
+// VerifyTimeSequence verifies sequence integrity
+func (r *WasmRuntime) VerifyTimeSequence(sequence []*timechain.SequenceEntry) error {
+    if r.timechain == nil {
+        return errors.New("timechain not enabled")
+    }
+    return r.timechain.VerifySequence(sequence)
 }

@@ -7,6 +7,7 @@ import (
     "github.com/ava-labs/avalanchego/utils/units"
     "github.com/bytecodealliance/wasmtime-go/v25"
     "github.com/ava-labs/hypersdk/runtime/events"
+    "github.com/ava-labs/hypersdk/runtime/timechain"
 )
 
 type CompileStrategy uint8
@@ -37,6 +38,11 @@ var (
     defaultCraneliftOptLevel            = wasmtime.OptLevelSpeed
     defaultEnableCraneliftDebugVerifier = false
     defaultEnableDebugInfo              = false
+    // New TimeChain defaults
+    defaultTimeChainEnabled = false
+    defaultMinServers = 3
+    defaultWindowDuration = 30 * time.Second
+    defaultVerificationTolerance = 5 * time.Second
 )
 
 // Config is wrapper for wasmtime.Config
@@ -50,6 +56,16 @@ type Config struct {
 
     // Event configuration
     EventConfig *events.Config `json:"eventConfig,omitempty" yaml:"event_config,omitempty"`
+
+    TimeChain *TimeChainConfig `json:"timeChain,omitempty" yaml:"time_chain,omitempty"`
+}
+
+// Add TimeChainConfig struct
+type TimeChainConfig struct {
+    Enabled bool `json:"enabled" yaml:"enabled"`
+    MinServers int `json:"minServers" yaml:"min_servers"`
+    WindowDuration time.Duration `json:"windowDuration" yaml:"window_duration"`
+    VerificationTolerance time.Duration `json:"verificationTolerance" yaml:"verification_tolerance"`
 }
 
 // NewConfig creates a new engine config with default settings
@@ -58,6 +74,11 @@ func NewConfig() *Config {
         wasmConfig:        DefaultWasmtimeConfig(),
         ContractCacheSize: defaultContractCacheSize,
         EventConfig:       events.DefaultConfig(),
+        TimeChain: &TimeChainConfig{
+            Enabled:               defaultTimeChainEnabled,
+            MinServers:           defaultMinServers,
+            WindowDuration:       defaultWindowDuration,
+            VerificationTolerance: defaultVerificationTolerance,
     }
 }
 
@@ -204,6 +225,11 @@ type ConfigBuilder struct {
     // Event configuration
     EventConfigBuilder      *events.ConfigBuilder
     EventConfig            *events.Config
+
+    TimeChainEnabled bool `json:"timeChainEnabled,omitempty" yaml:"time_chain_enabled,omitempty"`
+    TimeChainMinServers int `json:"timeChainMinServers,omitempty" yaml:"time_chain_min_servers,omitempty"`
+    TimeChainWindowDuration time.Duration `json:"timeChainWindowDuration,omitempty" yaml:"time_chain_window_duration,omitempty"`
+    TimeChainVerificationTolerance time.Duration `json:"timeChainVerificationTolerance,omitempty" yaml:"time_chain_verification_tolerance,omitempty"`
 }
 
 func NewConfigBuilder() *ConfigBuilder {
@@ -328,6 +354,27 @@ func (c *ConfigBuilder) WithPongValidators(validators [][32]byte) *ConfigBuilder
     return c
 }
 
+// Add TimeChain builder methods
+func (c *ConfigBuilder) WithTimeChain(enabled bool) *ConfigBuilder {
+    c.TimeChainEnabled = enabled
+    return c
+}
+
+func (c *ConfigBuilder) WithTimeChainMinServers(minServers int) *ConfigBuilder {
+    c.TimeChainMinServers = minServers
+    return c
+}
+
+func (c *ConfigBuilder) WithTimeChainWindowDuration(duration time.Duration) *ConfigBuilder {
+    c.TimeChainWindowDuration = duration
+    return c
+}
+
+func (c *ConfigBuilder) WithTimeChainVerificationTolerance(tolerance time.Duration) *ConfigBuilder {
+    c.TimeChainVerificationTolerance = tolerance
+    return c
+}
+
 func (c *ConfigBuilder) Build() (*Config, error) {
     cfg := NewConfig()
     cfg.SetWasmBulkMemory(c.EnableBulkMemory)
@@ -343,6 +390,16 @@ func (c *ConfigBuilder) Build() (*Config, error) {
             return nil, err
         }
         cfg.EventConfig = c.EventConfig
+    }
+
+    // Set TimeChain configuration
+    if c.TimeChainEnabled {
+        cfg.TimeChain = &TimeChainConfig{
+            Enabled:               c.TimeChainEnabled,
+            MinServers:           c.TimeChainMinServers,
+            WindowDuration:       c.TimeChainWindowDuration,
+            VerificationTolerance: c.TimeChainVerificationTolerance,
+        }
     }
 
     if c.EnableDefaultCache {

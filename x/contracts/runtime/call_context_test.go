@@ -120,3 +120,30 @@ func TestCallContextPreventOverwrite(t *testing.T) {
 	require.ErrorIs(err, errCannotOverwrite)
 	require.Nil(result)
 }
+
+func TestCallContextWithTimeChain(t *testing.T) {
+    require := require.New(t)
+    ctx := context.Background()
+
+    cfg := NewConfig()
+    cfg.TimeChain.Enabled = true
+
+    rt := newTestRuntime(ctx)
+    contract, err := rt.newTestContract("call_contract")
+    require.NoError(err)
+
+    // Test with time verification
+    result, err := contract.Call("actor_check")
+    require.NoError(err)
+    require.True(result.Success)
+
+    // Verify time sequence
+    if rt.timechain != nil {
+        sequence := rt.timechain.Sequence.GetSequence()
+        require.NotEmpty(sequence)
+        
+        // Verify sequence integrity
+        err = rt.timechain.VerifySequence(sequence)
+        require.NoError(err)
+    }
+}
