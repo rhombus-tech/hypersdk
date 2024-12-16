@@ -14,8 +14,9 @@ import (
     "github.com/ava-labs/avalanchego/utils/logging"
     "github.com/ava-labs/hypersdk/chain"
     "github.com/ava-labs/hypersdk/codec"
-    "github.com/ava-labs/hypersdk/runtime"
-    "github.com/ava-labs/hypersdk/runtime/events"
+    "github.com/ava-labs/hypersdk/x/contracts/runtime"
+    "github.com/ava-labs/hypersdk/x/contracts/runtime/util_test"
+    "github.com/ava-labs/hypersdk/x/contracts/runtime/events"
 )
 
 var (
@@ -23,6 +24,7 @@ var (
     ErrInvalidConfig     = errors.New("invalid configuration")
     ErrWorkerUnavailable = errors.New("no workers available")
 )
+
 
 // Manager coordinates off-chain worker components
 type Manager struct {

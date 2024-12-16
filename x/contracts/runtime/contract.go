@@ -14,7 +14,7 @@ import (
 	"github.com/bytecodealliance/wasmtime-go/v25"
 	"github.com/ava-labs/hypersdk/chain"
 	"github.com/ava-labs/hypersdk/codec"
-	"github.com/ava-labs/hypersdk/runtime/events"
+	"github.com/ava-labs/hypersdk/x/contracts/runtime/events"
 )
 
 const (

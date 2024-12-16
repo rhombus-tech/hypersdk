@@ -11,8 +11,6 @@ import (
    "time"
 
    "github.com/ava-labs/avalanchego/ids"
-   "github.com/ava-labs/hypersdk/chain"
-   "github.com/ava-labs/hypersdk/codec"
    "github.com/ava-labs/hypersdk/state"
    // NEW: Add events package
    "github.com/ava-labs/hypersdk/runtime/events"
@@ -21,9 +19,9 @@ import (
 var (
    ErrReadOnlyState     = errors.New("attempted write operation on read-only state")
    ErrStateNotFound     = errors.New("state not found")
-   ErrInvalidKey        = errors.New("invalid state key")
    ErrCacheMiss         = errors.New("state cache miss")
    ErrStateUnavailable  = errors.New("state unavailable")
+   ErrNotFound = errors.New("item not found in state")
 )
 
 // OffChainState manages state access for off-chain workers

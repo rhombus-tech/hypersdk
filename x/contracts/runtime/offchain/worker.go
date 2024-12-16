@@ -1,17 +1,18 @@
 package offchain
 
 import (
-    "context"
-    "fmt"
-    "sync"
-    "time"
+	"context"
+	"fmt"
+	"sync"
+	"time"
 
-    "github.com/ava-labs/avalanchego/ids"
-    "github.com/ava-labs/avalanchego/utils/logging"
-    "github.com/ava-labs/hypersdk/chain"
-    "github.com/ava-labs/hypersdk/codec"
-    "github.com/ava-labs/hypersdk/runtime"
-    "github.com/ava-labs/hypersdk/state"
+	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/hypersdk/chain"
+	"github.com/ava-labs/hypersdk/codec"
+	"github.com/ava-labs/hypersdk/runtime"
+	"github.com/ava-labs/hypersdk/state"
+	"github.com/ava-labs/hypersdk/x/contracts/runtime/events"
 )
 
 type OffChainWorker struct {

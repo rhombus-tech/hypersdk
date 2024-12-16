@@ -7,6 +7,7 @@ import (
     "sync"
     "time"
     "log"
+    "github.com/google/uuid"
 )
 
 type WorkerID string
@@ -43,6 +44,26 @@ func NewChannelCoordinator(numWorkers int) *ChannelCoordinator {
     }
 
     return c
+}
+
+func NewWorker(taskCh chan Task, resultCh chan Result, controlCh chan ControlMsg) *Worker {
+    return &Worker{
+        ID:            generateWorkerID(),
+        TaskChannel:   taskCh,
+        ResultChannel: resultCh,
+        ControlChannel: controlCh,
+    }
+}
+
+func generateWorkerID() WorkerID {
+    return WorkerID(uuid.New().String())
+}
+
+type Worker struct {
+    ID            WorkerID
+    TaskChannel   chan Task
+    ResultChannel chan Result
+    ControlChannel chan ControlMsg
 }
 
 // 2. Shared Memory Coordination
@@ -106,28 +127,31 @@ type WorkerCoordinator struct {
     }
 }
 
-// Worker implementation with TEE support
-type Worker struct {
-    ID       WorkerID
-    tasks    chan TaskWithCoordination
-    results  chan Result
-    
-    // Coordination state
-    activeCoordination *TaskCoordination
-    partner           *Worker
-
-    // TEE specific fields
-    enclaveID     []byte
-    attestation   []byte
-    secureChannel *SecureChannel
+// ControlMsg represents a control message for coordination between components
+type ControlMsg struct {
+    Type    string      `json:"type"`
+    Payload interface{} `json:"payload"`
+    ID      string      `json:"id"`
 }
 
-// TEE specific types
+// SecureChannel represents a secure communication channel between components
 type SecureChannel struct {
-    sessionKey []byte
-    encrypted  bool
+    incoming chan []byte
+    outgoing chan []byte
+    encrypt  func([]byte) ([]byte, error)
+    decrypt  func([]byte) ([]byte, error)
 }
 
+// NewSecureChannel creates a new secure channel with encryption
+func NewSecureChannel(bufferSize int) *SecureChannel {
+    return &SecureChannel{
+        incoming: make(chan []byte, bufferSize),
+        outgoing: make(chan []byte, bufferSize),
+        encrypt:  defaultEncrypt,
+        decrypt:  defaultDecrypt,
+        }  // Missing closing brace was here
+}
+    
 type TaskWithCoordination struct {
     Task          Task
     Coordination  *TaskCoordination
@@ -270,6 +294,11 @@ func (w *Worker) respondToCoordination(t TaskWithCoordination) error {
         return w.respondSecureCoordination(t)
     }
     return w.respondStandardCoordination(t)
+}
+
+func (w *Worker) respondSecureCoordination(t TaskWithCoordination) error {
+    // Handle secure coordination response
+    return nil
 }
 
 // Helper methods for TEE operations

@@ -11,7 +11,7 @@ import (
     "github.com/ava-labs/avalanchego/utils/logging"
     "github.com/ava-labs/hypersdk/chain"
     "github.com/ava-labs/hypersdk/codec"
-    "github.com/ava-labs/hypersdk/runtime/events"
+    "github.com/ava-labs/hypersdk/x/contracts/runtime/events"
 )
 
 // EventsRuntime provides a runtime wrapper with guaranteed event support

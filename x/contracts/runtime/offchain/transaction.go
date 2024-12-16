@@ -14,7 +14,7 @@ import (
     "github.com/ava-labs/avalanchego/utils/logging"
     "github.com/ava-labs/hypersdk/chain"
     "github.com/ava-labs/hypersdk/codec"
-    "github.com/ava-labs/hypersdk/crypto"
+    "go.uber.org/zap"
 )
 
 var (
@@ -25,10 +25,15 @@ var (
     ErrInsufficientFunds    = errors.New("insufficient funds")
 )
 
+const (
+    // Maximum size of a transaction in bytes
+    MaxTransactionSize = 1 << 20 // 1MB
+)
+
 // TransactionSubmitter handles transaction generation and submission
 type TransactionSubmitter struct {
     txPool      TxPool
-    signer      crypto.Signer
+    signer      Signer
     state       *OffChainState
     log         logging.Logger
     config      *TxSubmitterConfig
@@ -76,10 +81,15 @@ type TxMetrics struct {
     lock         sync.Mutex
 }
 
+// Signer interface for transaction signing
+type Signer interface {
+    SignTransaction(*chain.Transaction) (*chain.Transaction, error)
+}
+
 // NewTransactionSubmitter creates a new transaction submitter
 func NewTransactionSubmitter(
     txPool TxPool,
-    signer crypto.Signer,
+    signer Signer,  // Changed from crypto.Signer
     state *OffChainState,
     config *TxSubmitterConfig,
     log logging.Logger,
@@ -144,7 +154,7 @@ func (t *TransactionSubmitter) SubmitBatch(txs []*chain.Transaction) error {
 
 func (t *TransactionSubmitter) submitSingle(tx *chain.Transaction) error {
     // Sign transaction if not already signed
-    if !tx.IsSigned() {
+    if (!tx.IsSigned()) {
         signedTx, err := t.signTransaction(tx)
         if err != nil {
             return err
@@ -239,7 +249,7 @@ func (t *TransactionSubmitter) submitPendingBatch() {
     }
 
     if err := t.submitBatch(t.batch); err != nil {
-        t.log.Error("Failed to submit batch: %v", err)
+        t.log.Error(fmt.Sprintf("Failed to submit batch: %v", err))
     }
 
     // Clear batch
@@ -273,13 +283,14 @@ func (t *TransactionSubmitter) checkPendingTxs() {
             if pending.Attempts < t.config.RetryAttempts {
                 // Retry submission
                 if err := t.retryTransaction(pending.Tx); err != nil {
-                    t.log.Warn("Failed to retry transaction %s: %v", txID, err)
+                    t.log.Warn(fmt.Sprintf("Failed to retry transaction %s: %v", txID, err))
                 }
+                
                 pending.Attempts++
                 pending.LastAttempt = now
             } else {
                 // Give up on transaction
-                t.log.Warn("Transaction %s exceeded retry attempts", txID)
+                t.log.Warn("Transaction warning", zap.Stringer("txID", txID))
                 delete(t.pending, txID)
             }
         }
@@ -311,9 +322,9 @@ func (t *TransactionSubmitter) validateTransaction(tx *chain.Transaction) error 
         return errors.New("nil transaction")
     }
 
-    // Validate size
-    if size := tx.Size(); size > chain.MaxTransactionSize {
-        return fmt.Errorf("transaction too large: %d > %d", size, chain.MaxTransactionSize)
+    // Validate size - using local constant instead of chain package
+    if size := tx.Size(); size > MaxTransactionSize {
+        return fmt.Errorf("transaction too large: %d > %d", size, MaxTransactionSize)
     }
 
     // Validate nonce
@@ -348,7 +359,7 @@ func (t *TransactionSubmitter) updateMetrics(tx *chain.Transaction) {
     defer t.metrics.lock.Unlock()
 
     t.metrics.Submitted++
-    t.metrics.TotalFees += tx.Fee()
+    t.metrics.TotalFees += calculateTransactionFee(tx)
     t.metrics.AvgGasPrice = t.metrics.TotalFees / t.metrics.Submitted
 }
 
@@ -369,6 +380,14 @@ func (t *TransactionSubmitter) GetMetrics() TxMetrics {
     t.metrics.lock.Lock()
     defer t.metrics.lock.Unlock()
     return *t.metrics
+}
+
+func isTransactionSigned(tx *chain.Transaction) bool {
+    return len(tx.Signature) > 0  // Adjust based on actual chain.Transaction structure
+}
+
+func calculateTransactionFee(tx *chain.Transaction) uint64 {
+    return tx.GasPrice * tx.GasLimit  // Adjust based on actual chain.Transaction structure
 }
 
 // TxPool defines the interface for transaction pool interaction

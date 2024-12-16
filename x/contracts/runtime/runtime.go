@@ -7,7 +7,6 @@ import (
     "context"
     "errors"
     "reflect"
-    "time"
 
     "github.com/ava-labs/avalanchego/cache"
     "github.com/ava-labs/avalanchego/utils/logging"
@@ -15,8 +14,9 @@ import (
     
     "github.com/ava-labs/hypersdk/chain"
     "github.com/ava-labs/hypersdk/codec"
-    "github.com/ava-labs/hypersdk/runtime/events"
-    "github.com/ava-labs/hypersdk/runtime/timechain"
+    "github.com/ava-labs/hypersdk/x/contracts/runtime/events"
+    "github.com/ava-labs/hypersdk/x/contracts/runtime/timechain"
+    "github.com/ava-labs/avalanchego/ids"
 )
 
 var (
@@ -30,6 +30,7 @@ type WasmRuntime struct {
     contractCache cache.Cacher[string, *wasmtime.Module]
     callerInfo    map[uintptr]*CallInfo
     linker        *wasmtime.Linker
+    txpool        TxPool
 
     // Event management
     eventManager  *events.Manager
@@ -118,7 +119,7 @@ func (r *WasmRuntime) Events() *events.Manager {
 
 // WithDefaults creates a new call context with default values
 func (r *WasmRuntime) WithDefaults(callInfo CallInfo) CallContext {
-    if r.eventManager != nil {
+    if (r.eventManager != nil) {
         callInfo.events = make([]events.Event, 0)
     }
 
@@ -319,4 +320,27 @@ func (r *WasmRuntime) VerifyTimeSequence(sequence []*timechain.SequenceEntry) er
         return errors.New("timechain not enabled")
     }
     return r.timechain.VerifySequence(sequence)
+}
+
+// GetTxPool returns the transaction pool associated with this runtime
+func (w *WasmRuntime) GetTxPool() TxPool {
+    return w.txPool
+}
+
+// TxPool defines the interface for managing transaction pool operations
+type TxPool interface {
+    // AddTx adds a transaction to the pool
+    AddTx(tx *chain.Transaction) error
+    
+    // GetPendingTx retrieves a pending transaction by ID
+    GetPendingTx(txID ids.ID) (*chain.Transaction, error)
+    
+    // RemoveTx removes a transaction from the pool
+    RemoveTx(txID ids.ID) error
+    
+    // GetPendingTxs returns all pending transactions
+    GetPendingTxs() []*chain.Transaction
+    
+    // Clear removes all transactions from the pool
+    Clear() error
 }

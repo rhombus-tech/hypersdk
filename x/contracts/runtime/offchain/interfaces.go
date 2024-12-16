@@ -3,6 +3,12 @@
 
 package offchain
 
+import (
+    "context"
+
+    "github.com/ava-labs/hypersdk/chain"
+)
+
 // TransactionPool interface for submitting transactions
 type TransactionPool interface {
     AddLocal(tx *chain.Transaction) error

@@ -13,12 +13,7 @@ import (
     "github.com/ava-labs/avalanchego/ids"
     "github.com/ava-labs/hypersdk/chain"
     "github.com/ava-labs/hypersdk/codec"
-    "github.com/ava-labs/hypersdk/runtime/timechain"
-)
-
-var (
-    errCannotOverwrite = errors.New("trying to overwrite set field")
-    callInfoTypeInfo   = reflect.TypeOf(CallInfo{})
+    "github.com/ava-labs/hypersdk/x/contracts/runtime/timechain"
 )
 
 type CallContext struct {

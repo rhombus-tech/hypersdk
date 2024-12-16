@@ -17,8 +17,20 @@ import (
 	"github.com/ava-labs/hypersdk/codec"
 	"github.com/ava-labs/hypersdk/state"
 	"github.com/ava-labs/hypersdk/x/contracts/test"
-	"github.com/ava-labs/hypersdk/runtime/events"
+	"github.com/ava-labs/hypersdk/x/contracts/runtime/events"
 )
+
+// StateManager defines the interface for managing contract state
+type StateManager interface {
+	GetAccountContract(ctx context.Context, account codec.Address) (ContractID, error)
+	GetContractBytes(ctx context.Context, contractID ContractID) ([]byte, error)
+	SetContractBytes(ctx context.Context, contractID ContractID, contractBytes []byte) error
+	NewAccountWithContract(ctx context.Context, contractID ContractID, data []byte) (codec.Address, error)
+	SetAccountContract(ctx context.Context, account codec.Address, contractID ContractID) error
+	GetBalance(ctx context.Context, address codec.Address) (uint64, error)
+	TransferBalance(ctx context.Context, from codec.Address, to codec.Address, amount uint64) error
+	GetContractState(address codec.Address) state.Mutable
+}
 
 type TestStateManager struct {
 	ContractManager *ContractStateManager
@@ -121,13 +133,6 @@ func prependAccountToKey(account codec.Address, key []byte) []byte {
 	copy(result[len(account):], "/")
 	copy(result[len(account)+1:], key)
 	return result
-}
-
-type testRuntime struct {
-	Context      context.Context
-	callContext  CallContext
-	StateManager StateManager
-	eventManager *events.Manager
 }
 
 func newTestRuntime(ctx context.Context) *testRuntime {

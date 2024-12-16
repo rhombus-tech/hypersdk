@@ -15,6 +15,7 @@ import (
     "github.com/ava-labs/avalanchego/ids"
     "github.com/ava-labs/avalanchego/utils/logging"
     "github.com/ava-labs/hypersdk/codec"
+    "go.uber.org/zap"
     "github.com/syndtr/goleveldb/leveldb"
     "github.com/syndtr/goleveldb/leveldb/opt"
     "github.com/syndtr/goleveldb/leveldb/util"
@@ -68,7 +69,6 @@ type StorageConfig struct {
     Path            string
     CacheSize       int
     MaxOpenFiles    int
-    CompactionMode  opt.CompactionType
     GCInterval      time.Duration
     EnableMetrics   bool
 }
@@ -96,12 +96,6 @@ type StorageCache struct {
     lock       sync.RWMutex
 }
 
-type CacheEntry struct {
-    value      []byte
-    timestamp  time.Time
-    size       int
-}
-
 // NewLocalStorage creates a new local storage instance
 func NewLocalStorage(config *StorageConfig, log logging.Logger) (*LocalStorage, error) {
     // Open LevelDB
@@ -110,7 +104,6 @@ func NewLocalStorage(config *StorageConfig, log logging.Logger) (*LocalStorage, 
         OpenFilesCacheCapacity: config.MaxOpenFiles,
         CompactionTableSize:    32 * 1024 * 1024, // 32MB
         WriteBuffer:           16 * 1024 * 1024,  // 16MB
-        CompactionType:        config.CompactionMode,
     }
 
     db, err := leveldb.OpenFile(config.Path, opts)
@@ -343,6 +336,21 @@ func (ls *LocalStorage) Close() error {
     return ls.db.Close()
 }
 
+// Add error logging helper
+func (ls *LocalStorage) logError(msg string, err error) {
+    ls.log.Error(fmt.Sprintf("%s: %v", msg, err))
+}
+
+func (ls *LocalStorage) marshalData(v interface{}) ([]byte, error) {
+    data, err := codec.Marshal(v)
+    if err != nil {
+        ls.log.Error("Failed to marshal data",
+            zap.Error(err),
+            zap.Any("value", v))
+        return nil, fmt.Errorf("marshal failed: %w", err)
+    }
+    return data, nil
+}
 // Internal methods
 
 func (ls *LocalStorage) startBackgroundTasks() {
@@ -536,6 +544,16 @@ func (ls *LocalStorage) loadNamespaceInfo(namespace string) error {
     }
 
     ls.namespaces[namespace] = info
+    return nil
+}
+
+func (ls *LocalStorage) unmarshalData(data []byte, v interface{}) error {
+    if err := codec.Unmarshal(data, v); err != nil {
+        ls.log.Error("Failed to unmarshal data",
+            zap.Error(err),
+            zap.Binary("data", data))
+        return fmt.Errorf("unmarshal failed: %w", err)
+    }
     return nil
 }
 

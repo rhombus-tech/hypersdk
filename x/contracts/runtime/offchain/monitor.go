@@ -19,7 +19,6 @@ import (
 
 var (
     ErrMonitorStopped     = errors.New("monitor stopped")
-    ErrResourceExhausted  = errors.New("resource limit exceeded")
     ErrUnhealthyWorker    = errors.New("worker unhealthy")
 )
 

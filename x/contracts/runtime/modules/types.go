@@ -4,9 +4,20 @@
 package modules
 
 import (
-    "github.com/ava-labs/hypersdk/codec"
     "github.com/bytecodealliance/wasmtime-go/v25"
+    "github.com/ava-labs/hypersdk/x/contracts/runtime"
 )
+
+// CallInfo represents the information about a call
+type CallInfo struct {
+    Caller    string
+    Callee    string
+    Value     int64
+    GasLimit  uint64
+    GasPrice  uint64
+        Data      []byte
+        Instance  *ContractInstance
+    }
 
 // Module defines the interface for a WASM module
 type Module interface {
@@ -106,18 +117,40 @@ func writeOutputToMemory[T any](callInfo *CallInfo, results T, err error) ([]was
     if err != nil {
         return NilResult, ConvertToTrap(err)
     }
-
+    
     data, err := Serialize(results)
-    if data == nil || err != nil {
+    if err != nil {
         return NilResult, ConvertToTrap(err)
     }
-
+    
     offset, err := allocateMemory(callInfo.Instance, data)
     if err != nil {
         return NilResult, ConvertToTrap(err)
     }
+    
+    return []wasmtime.Val{wasmtime.ValI32(int32(offset))}, nil
+}
 
-    return []wasmtime.Val{wasmtime.ValI32(offset)}, nil
+// Serialize serializes the given data into bytes
+func Serialize[T any](data T) ([]byte, error) {
+    return runtime.Serialize(data)
+}
+
+// Deserialize deserializes the data into the given type
+func Deserialize[T any](data []byte) (*T, error) {
+    result := new(T)
+    
+    // Check for custom deserialization first
+    if custom, ok := any(*result).(customDeserialize[T]); ok {
+        return custom.customDeserialize(data)
+    }
+    
+    // Use runtime deserialization
+    if err := runtime.Deserialize(data); err != nil {
+        return nil, err
+    }
+    
+    return result, nil
 }
 
 // Helper for memory allocation

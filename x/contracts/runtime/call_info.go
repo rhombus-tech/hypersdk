@@ -6,8 +6,8 @@ package runtime
 import (
     "github.com/ava-labs/avalanchego/ids"
     "github.com/ava-labs/hypersdk/codec"
-    "github.com/ava-labs/hypersdk/runtime/events"
-    "github.com/ava-labs/hypersdk/runtime/timechain"
+    "github.com/ava-labs/hypersdk/x/contracts/runtime/events"
+    "github.com/ava-labs/hypersdk/x/contracts/runtime/timechain"
 )
 
 type CallInfo struct {

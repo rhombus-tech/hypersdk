@@ -6,8 +6,8 @@ package runtime
 import (
     "github.com/ava-labs/avalanchego/utils/units"
     "github.com/bytecodealliance/wasmtime-go/v25"
-    "github.com/ava-labs/hypersdk/runtime/events"
-    "github.com/ava-labs/hypersdk/runtime/timechain"
+    "github.com/ava-labs/hypersdk/x/contracts/runtime/events"
+    "github.com/ava-labs/hypersdk/x/contracts/runtime/timechain"
 )
 
 type CompileStrategy uint8

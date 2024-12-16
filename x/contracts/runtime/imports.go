@@ -8,7 +8,7 @@ import (
     "golang.org/x/exp/maps"
     
     "github.com/ava-labs/hypersdk/chain"
-    "github.com/ava-labs/hypersdk/runtime/events"
+    "github.com/ava-labs/hypersdk/x/contracts/runtime/events"
 )
 
 const (
