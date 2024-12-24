@@ -9,11 +9,17 @@ const Namespace = "region"
 
 type Config struct {
     Enabled bool `json:"enabled"`
+    // Time window for attestations
+    MaxTimeDrift uint64 `json:"maxTimeDrift"`
+    // Minimum TEE pairs per region
+    MinTEEPairs uint64 `json:"minTeePairs"`
 }
 
 func NewDefaultConfig() Config {
     return Config{
         Enabled: true,
+        MaxTimeDrift: 300, // 5 minutes in seconds
+        MinTEEPairs: 1,   // Minimum one pair per region
     }
 }
 
