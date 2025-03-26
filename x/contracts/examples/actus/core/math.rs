@@ -1,4 +1,4 @@
-use wasmlanche::Units;
+use token::Units;
 
 /// Constants for time calculations
 const SECONDS_PER_DAY: u64 = 86400;
@@ -9,12 +9,7 @@ const BASIS_POINT_FACTOR: u64 = 10000;
 // ============= Year Fraction Calculations =============
 
 /// Year fraction calculation using different day count conventions
-pub fn year_fraction(
-    dcc: u8,
-    start_time: u64,
-    end_time: u64,
-    maturity_time: Option<u64>
-) -> Units {
+pub fn year_fraction(dcc: u8, start_time: u64, end_time: u64, maturity_time: Option<u64>) -> Units {
     match dcc {
         0 => year_fraction_actual_actual_isda(start_time, end_time),
         1 => year_fraction_actual_360(start_time, end_time),
@@ -33,7 +28,7 @@ fn year_fraction_actual_actual_isda(start_time: u64, end_time: u64) -> Units {
 
     let start_year = get_year(start_time);
     let end_year = get_year(end_time);
-    
+
     if start_year == end_year {
         let year_length = if is_leap_year(start_year) { 366 } else { 365 };
         let days_diff = days_between(start_time, end_time);
@@ -42,22 +37,19 @@ fn year_fraction_actual_actual_isda(start_time: u64, end_time: u64) -> Units {
 
     // Handle multi-year periods
     let mut total_fraction = 0;
-    
+
     // First partial year
     let next_year_start = start_of_year(start_year + 1);
     total_fraction += year_fraction_actual_actual_isda(start_time, next_year_start);
-    
+
     // Full years in between
     for year in (start_year + 1)..end_year {
         total_fraction += BASIS_POINT_FACTOR as Units;
     }
-    
+
     // Final partial year
-    total_fraction += year_fraction_actual_actual_isda(
-        start_of_year(end_year),
-        end_time
-    );
-    
+    total_fraction += year_fraction_actual_actual_isda(start_of_year(end_year), end_time);
+
     total_fraction
 }
 
@@ -65,7 +57,7 @@ fn year_fraction_actual_360(start_time: u64, end_time: u64) -> Units {
     if start_time >= end_time {
         return 0;
     }
-    
+
     let days = days_between(start_time, end_time);
     (days * BASIS_POINT_FACTOR / 360) as Units
 }
@@ -74,7 +66,7 @@ fn year_fraction_actual_365(start_time: u64, end_time: u64) -> Units {
     if start_time >= end_time {
         return 0;
     }
-    
+
     let days = days_between(start_time, end_time);
     (days * BASIS_POINT_FACTOR / 365) as Units
 }
@@ -83,41 +75,41 @@ fn year_fraction_thirty_e_360(start_time: u64, end_time: u64) -> Units {
     if start_time >= end_time {
         return 0;
     }
-    
+
     let (start_y, start_m, start_d) = get_ymd(start_time);
     let (end_y, end_m, end_d) = get_ymd(end_time);
-    
+
     let d1 = if start_d == 31 { 30 } else { start_d };
     let d2 = if end_d == 31 { 30 } else { end_d };
-    
-    let days = 360 * (end_y - start_y) + 
-               30 * (end_m - start_m) + 
-               (d2 - d1);
-               
+
+    let days = 360 * (end_y - start_y) + 30 * (end_m - start_m) + (d2 - d1);
+
     (days * BASIS_POINT_FACTOR / 360) as Units
 }
 
-fn year_fraction_thirty_e_360_isda(
-    start_time: u64,
-    end_time: u64,
-    maturity: Option<u64>
-) -> Units {
+fn year_fraction_thirty_e_360_isda(start_time: u64, end_time: u64, maturity: Option<u64>) -> Units {
     if start_time >= end_time {
         return 0;
     }
-    
+
     let (start_y, start_m, start_d) = get_ymd(start_time);
     let (end_y, end_m, end_d) = get_ymd(end_time);
-    
-    let d1 = if is_last_day_of_month(start_time) { 30 } else { start_d };
-    let d2 = if is_last_day_of_month(end_time) && 
-                (maturity.is_none() || end_time != maturity.unwrap() || end_m != 2)
-             { 30 } else { end_d };
-    
-    let days = 360 * (end_y - start_y) + 
-               30 * (end_m - start_m) + 
-               (d2 - d1);
-               
+
+    let d1 = if is_last_day_of_month(start_time) {
+        30
+    } else {
+        start_d
+    };
+    let d2 = if is_last_day_of_month(end_time)
+        && (maturity.is_none() || end_time != maturity.unwrap() || end_m != 2)
+    {
+        30
+    } else {
+        end_d
+    };
+
+    let days = 360 * (end_y - start_y) + 30 * (end_m - start_m) + (d2 - d1);
+
     (days * BASIS_POINT_FACTOR / 360) as Units
 }
 
@@ -125,7 +117,7 @@ fn year_fraction_bus_252(start_time: u64, end_time: u64) -> Units {
     if start_time >= end_time {
         return 0;
     }
-    
+
     let business_days = count_business_days(start_time, end_time);
     (business_days * BASIS_POINT_FACTOR / 252) as Units
 }
@@ -134,14 +126,20 @@ fn year_fraction_bus_252(start_time: u64, end_time: u64) -> Units {
 
 /// Calculates the annuity amount given an interest rate and time factors
 pub fn annuity(rate: Units, time_factors: &[Units]) -> Units {
-    let numerator = product(&time_factors.iter()
-        .map(|&t| rate * t / BASIS_POINT_FACTOR + BASIS_POINT_FACTOR)
-        .collect::<Vec<_>>());
-        
-    let denominator = sum(&running_product(&time_factors.iter()
-        .map(|&t| rate * t / BASIS_POINT_FACTOR + BASIS_POINT_FACTOR)
-        .collect::<Vec<_>>()));
-        
+    let numerator = product(
+        &time_factors
+            .iter()
+            .map(|&t| rate * t / BASIS_POINT_FACTOR + BASIS_POINT_FACTOR)
+            .collect::<Vec<_>>(),
+    );
+
+    let denominator = sum(&running_product(
+        &time_factors
+            .iter()
+            .map(|&t| rate * t / BASIS_POINT_FACTOR + BASIS_POINT_FACTOR)
+            .collect::<Vec<_>>(),
+    ));
+
     if denominator == 0 {
         0
     } else {
@@ -220,10 +218,10 @@ fn count_business_days(start: u64, end: u64) -> u64 {
     let mut total_days = days_between(start, end);
     let mut weeks = total_days / 7;
     let remaining_days = total_days % 7;
-    
+
     // Subtract weekends
     total_days -= weeks * 2;
-    
+
     // Handle remaining days
     if remaining_days > 0 {
         let start_day = (start / SECONDS_PER_DAY) % 7;
@@ -234,13 +232,15 @@ fn count_business_days(start: u64, end: u64) -> u64 {
             }
         }
     }
-    
+
     total_days
 }
 
 /// Product of a vector of numbers
 fn product(values: &[Units]) -> Units {
-    values.iter().fold(1, |acc, &x| acc * x / BASIS_POINT_FACTOR)
+    values
+        .iter()
+        .fold(1, |acc, &x| acc * x / BASIS_POINT_FACTOR)
 }
 
 /// Running product (tails) of a vector
@@ -261,17 +261,16 @@ fn sum(values: &[Units]) -> Units {
 }
 
 #[cfg(test)]
-
 // ============= Option Math =============
 
 /// Black-Scholes option pricing - returns value in basis points
 pub fn option_price(
-    spot: Units,           // Current price of underlying in basis points
-    strike: Units,         // Strike price in basis points
-    time: Units,           // Time to maturity in year fractions (basis points)
-    rate: Units,           // Risk-free rate in basis points
-    volatility: Units,     // Volatility in basis points
-    is_call: bool,         // true for call, false for put
+    spot: Units,       // Current price of underlying in basis points
+    strike: Units,     // Strike price in basis points
+    time: Units,       // Time to maturity in year fractions (basis points)
+    rate: Units,       // Risk-free rate in basis points
+    volatility: Units, // Volatility in basis points
+    is_call: bool,     // true for call, false for put
 ) -> Units {
     let s = spot as f64 / BASIS_POINT_FACTOR as f64;
     let k = strike as f64 / BASIS_POINT_FACTOR as f64;
@@ -326,17 +325,14 @@ pub fn calculate_scaling_factor(
     if initial_index == 0 {
         return BASIS_POINT_FACTOR as Units;
     }
-    
+
     let numerator = (current_index as u128) * (BASIS_POINT_FACTOR as u128);
     let denominator = initial_index as u128;
     (numerator / denominator) as Units
 }
 
 /// Apply scaling to an amount
-pub fn apply_scaling(
-    amount: Units,
-    scaling_factor: Units,
-) -> Units {
+pub fn apply_scaling(amount: Units, scaling_factor: Units) -> Units {
     ((amount as u128) * (scaling_factor as u128) / (BASIS_POINT_FACTOR as u128)) as Units
 }
 
@@ -344,33 +340,33 @@ pub fn apply_scaling(
 
 /// Calculate effective interest rate from nominal rate
 pub fn effective_rate(
-    nominal_rate: Units,    // In basis points
+    nominal_rate: Units, // In basis points
     compounds_per_year: u64,
 ) -> Units {
     let r = nominal_rate as f64 / BASIS_POINT_FACTOR as f64;
     let n = compounds_per_year as f64;
-    
-    let effective = (1.0 + r/n).powf(n) - 1.0;
+    let base:f64=1.0 + r / n;
+    let effective = (base).powf(n) - 1.0;
     (effective * BASIS_POINT_FACTOR as f64) as Units
 }
 
 /// Calculate forward rate from spot rates
 pub fn forward_rate(
-    rate1: Units,  // Rate for period 1 in basis points
-    rate2: Units,  // Rate for period 2 in basis points
-    time1: Units,  // Length of period 1 in year fractions (basis points)
-    time2: Units,  // Length of period 2 in year fractions (basis points)
+    rate1: Units, // Rate for period 1 in basis points
+    rate2: Units, // Rate for period 2 in basis points
+    time1: Units, // Length of period 1 in year fractions (basis points)
+    time2: Units, // Length of period 2 in year fractions (basis points)
 ) -> Units {
     if time1 >= time2 {
         return 0;
     }
 
-    let r1 = rate1 as f64 / BASIS_POINT_FACTOR as f64;
-    let r2 = rate2 as f64 / BASIS_POINT_FACTOR as f64;
+    let r1 = (rate1 as f64 / BASIS_POINT_FACTOR as f64) + 1.0;
+    let r2 = (rate2 as f64 / BASIS_POINT_FACTOR as f64) + 1.0;
     let t1 = time1 as f64 / BASIS_POINT_FACTOR as f64;
     let t2 = time2 as f64 / BASIS_POINT_FACTOR as f64;
 
-    let forward = ((1.0 + r2).powf(t2) / (1.0 + r1).powf(t1)).powf(1.0/(t2-t1)) - 1.0;
+    let forward = ((r2).powf(t2) / (r1).powf(t1)).powf(1.0 / (t2 - t1)) - 1.0;
     (forward * BASIS_POINT_FACTOR as f64) as Units
 }
 
@@ -378,15 +374,16 @@ pub fn forward_rate(
 
 /// Calculate present value of future cash flows
 pub fn present_value(
-    future_values: &[(Units, Units)],  // (amount, time) pairs, time in year fractions
-    discount_rate: Units,              // In basis points
+    future_values: &[(Units, Units)], // (amount, time) pairs, time in year fractions
+    discount_rate: Units,             // In basis points
 ) -> Units {
     let mut total_pv = 0u128;
     let r = discount_rate as f64 / BASIS_POINT_FACTOR as f64;
 
     for &(amount, time) in future_values {
+        let base:f64=1.0 + r;
         let t = time as f64 / BASIS_POINT_FACTOR as f64;
-        let discount_factor = 1.0 / (1.0 + r).powf(t);
+        let discount_factor = 1.0 / (base).powf(t);
         let pv = (amount as f64 * discount_factor) as u128;
         total_pv += pv;
     }
@@ -396,8 +393,8 @@ pub fn present_value(
 
 /// Calculate internal rate of return (IRR)
 pub fn calculate_irr(
-    cash_flows: &[(Units, Units)],  // (amount, time) pairs, time in year fractions
-    initial_guess: Units,           // Initial rate guess in basis points
+    cash_flows: &[(Units, Units)], // (amount, time) pairs, time in year fractions
+    initial_guess: Units,          // Initial rate guess in basis points
     max_iterations: u32,
 ) -> Option<Units> {
     let mut rate = initial_guess as f64 / BASIS_POINT_FACTOR as f64;
@@ -408,8 +405,9 @@ pub fn calculate_irr(
         let mut df = 0.0;
 
         for &(amount, time) in cash_flows {
+            let base:f64=1.0+rate;
             let t = time as f64 / BASIS_POINT_FACTOR as f64;
-            let pv_factor = 1.0 / (1.0 + rate).powf(t);
+            let pv_factor = 1.0 / (base).powf(t);
             f += amount as f64 * pv_factor;
             df -= t * amount as f64 * pv_factor / (1.0 + rate);
         }
@@ -425,39 +423,33 @@ pub fn calculate_irr(
         rate = new_rate;
     }
 
-    None  // Failed to converge
+    None // Failed to converge
 }
 
 // ============= Additional Math Functions =============
 
 /// Linear interpolation
-pub fn interpolate(
-    x: Units,
-    x0: Units,
-    x1: Units,
-    y0: Units,
-    y1: Units,
-) -> Units {
+pub fn interpolate(x: Units, x0: Units, x1: Units, y0: Units, y1: Units) -> Units {
     if x0 == x1 {
         return y0;
     }
-    
+
     let dx = (x1 as i128) - (x0 as i128);
     let dy = (y1 as i128) - (y0 as i128);
     let x_diff = (x as i128) - (x0 as i128);
-    
+
     let interpolated = y0 as i128 + (x_diff * dy) / dx;
     interpolated as Units
 }
 
 /// Safe exponentiation for basis points
 pub fn pow(
-    base: Units,        // In basis points
-    exponent: Units,    // In basis points
+    base: Units,     // In basis points
+    exponent: Units, // In basis points
 ) -> Units {
     let b = base as f64 / BASIS_POINT_FACTOR as f64;
     let e = exponent as f64 / BASIS_POINT_FACTOR as f64;
-    
+
     let result = b.powf(e);
     (result * BASIS_POINT_FACTOR as f64) as Units
 }
@@ -468,49 +460,49 @@ mod tests {
 
     #[test]
     fn test_option_pricing() {
-        let spot = 10000;      // $1.00
-        let strike = 10000;    // $1.00
-        let time = 10000;      // 1 year
-        let rate = 500;        // 5%
-        let vol = 2000;        // 20%
-        
+        let spot = 10000; // $1.00
+        let strike = 10000; // $1.00
+        let time = 10000; // 1 year
+        let rate = 500; // 5%
+        let vol = 2000; // 20%
+
         let call_price = option_price(spot, strike, time, rate, vol, true);
         let put_price = option_price(spot, strike, time, rate, vol, false);
-        
+
         // Put-call parity check (approximately)
         let parity_diff = (call_price as i64 - put_price as i64).abs();
-        assert!(parity_diff < 100);  // Within 1 cent
+        assert!(parity_diff < 100); // Within 1 cent
     }
 
     #[test]
     fn test_scaling_factor() {
-        let initial = 10000;    // 1.00
-        let current = 11000;    // 1.10
-        let reference = 10000;  // 1.00
-        
+        let initial = 10000; // 1.00
+        let current = 11000; // 1.10
+        let reference = 10000; // 1.00
+
         let factor = calculate_scaling_factor(initial, current, reference);
-        assert_eq!(factor, 11000);  // 1.10 in basis points
+        assert_eq!(factor, 11000); // 1.10 in basis points
     }
 
     #[test]
     fn test_present_value() {
         let cash_flows = vec![
-            (10000, 10000),  // $1 in 1 year
-            (10000, 20000),  // $1 in 2 years
+            (10000, 10000), // $1 in 1 year
+            (10000, 20000), // $1 in 2 years
         ];
-        let rate = 1000;     // 10%
-        
+        let rate = 1000; // 10%
+
         let pv = present_value(&cash_flows, rate);
-        assert!(pv < 20000);  // PV should be less than sum of cash flows
+        assert!(pv < 20000); // PV should be less than sum of cash flows
     }
 
     #[test]
     fn test_irr() {
         let cash_flows = vec![
-            (-10000, 0),     // Initial investment of $1
-            (12000, 10000),  // Return of $1.20 in 1 year
+            (-10000, 0),    // Initial investment of $1
+            (12000, 10000), // Return of $1.20 in 1 year
         ];
-        
+
         if let Some(irr) = calculate_irr(&cash_flows, 1000, 100) {
             assert!(irr > 0);
         }

@@ -1,0 +1,17 @@
+[package]
+name = "actus"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "core/mod.rs"
+
+[dependencies]
+token = { path = "../token" }
+wasmlanche = { workspace = true, features = ["debug"] }
+borsh = "1.5.3"
+[dev-dependencies]
+wasmlanche = { workspace = true, features = ["debug", "test"] }
+
+[build-dependencies]
+wasmlanche = { workspace = true, features = ["build"] }

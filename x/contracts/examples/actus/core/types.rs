@@ -1,6 +1,7 @@
 // src/type.rs
 
-use borsh::{BorshDeserialize, BorshSerialize};
+use borsh::{from_slice, to_vec, BorshDeserialize, BorshSerialize};
+pub type Units = u64;
 
 ////////////////////////////////////////////////////////////////////////////////
 // 1. Core "Timestamp" Type
@@ -16,32 +17,34 @@ pub type Timestamp = u64;
 /// All ACTUS event types, matching "BusinessEvents.hs"
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Ord, PartialOrd, BorshSerialize, BorshDeserialize)]
 #[repr(u8)]
+#[borsh(use_discriminant = true)]
 pub enum EventType {
-    IED  = 0,   // Initial Exchange
-    FP   = 1,   // Fee Payment
-    PR   = 2,   // Principal Redemption
-    PD   = 3,   // Principal Drawing
-    PY   = 4,   // Penalty Payment
-    PP   = 5,   // Principal Prepayment
-    IP   = 6,   // Interest Payment
-    IPFX = 7,   // Interest Payment Fixed Leg
-    IPFL = 8,   // Interest Payment Floating Leg
-    IPCI = 9,   // Interest Capitalization
-    CE   = 10,  // Credit Event
-    RRF  = 11,  // Rate Reset Fixing with Known Rate
-    RR   = 12,  // Rate Reset Fixing with Unknown Rate
-    PRF  = 13,  // Principal Payment Amount Fixing
-    DV   = 14,  // Dividend Payment
-    PRD  = 15,  // Purchase
-    MR   = 16,  // Margin Call
-    TD   = 17,  // Termination
-    SC   = 18,  // Scaling Index Fixing
-    IPCB = 19,  // Interest Calculation Base Fixing
-    MD   = 20,  // Maturity
-    XD   = 21,  // Exercise
-    STD  = 22,  // Settlement
-    PI   = 23,  // Principal Increase
-    AD   = 24,  // Monitoring
+    IED = 0,   // Initial Exchange
+    FP = 1,    // Fee Payment
+    PR = 2,    // Principal Redemption
+    PD = 3,    // Principal Drawing
+    PY = 4,    // Penalty Payment
+    PP = 5,    // Principal Prepayment
+    IP = 6,    // Interest Payment
+    IPFX = 7,  // Interest Payment Fixed Leg
+    IPFL = 8,  // Interest Payment Floating Leg
+    IPCI = 9,  // Interest Capitalization
+    CE = 10,   // Credit Event
+    RRF = 11,  // Rate Reset Fixing with Known Rate
+    RR = 12,   // Rate Reset Fixing with Unknown Rate
+    PRF = 13,  // Principal Payment Amount Fixing
+    DV = 14,   // Dividend Payment
+    PRD = 15,  // Purchase
+    MR = 16,   // Margin Call
+    TD = 17,   // Termination
+    SC = 18,   // Scaling Index Fixing
+    IPCB = 19, // Interest Calculation Base Fixing
+    MD = 20,   // Maturity
+    XD = 21,   // Exercise
+    STD = 22,  // Settlement
+    PI = 23,   // Principal Increase
+    AD = 24,   // Monitoring
+    EXE = 25,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -51,6 +54,7 @@ pub enum EventType {
 /// This mirrors "ContractState.hs".
 /// We've replaced `LocalTime` with `Timestamp` (u64).
 #[derive(Debug, Clone, PartialEq, BorshSerialize, BorshDeserialize)]
+#[borsh(crate = "wasmlanche::borsh")]
 pub struct ContractState {
     // tmd  :: Maybe LocalTime
     pub time_of_maturity: Option<Timestamp>,
@@ -103,7 +107,7 @@ pub struct ContractState {
 
 /// Contract performance states, from `PRF_PF, PRF_DL, PRF_DQ, PRF_DF`.
 #[derive(Debug, Clone, Copy, PartialEq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum ContractPerformance {
     PF = 0, // Performant
     DL = 1, // Delayed
@@ -118,9 +122,10 @@ pub enum ContractPerformance {
 /// Matches "ContractTerms.hs" but uses simple `Timestamp` for date/time fields.
 /// For numeric fields (like interest rates), we use `u64`. You can adjust as needed.
 #[derive(Debug, Clone, PartialEq, BorshSerialize, BorshDeserialize)]
+#[borsh(crate = "wasmlanche::borsh")]
 pub struct ContractTerms {
     // General
-    pub contract_id: String, 
+    pub contract_id: String,
     pub contract_type: ContractType,
     pub contract_role: ContractRole,
     pub settlement_currency: Option<String>,
@@ -160,6 +165,8 @@ pub struct ContractTerms {
     pub nominal_interest_rate: Option<u64>,
     pub nominal_interest_rate2: Option<u64>,
     pub interest_scaling_multiplier: Option<u64>,
+    pub balloon_amount: Option<u64>,
+    pub remaining_payments: Option<u64>,
 
     // Dates
     pub maturity_date: Option<Timestamp>,
@@ -205,85 +212,93 @@ pub struct ContractTerms {
     pub penalty_rate: Option<u64>,
     pub penalty_type: Option<PenaltyType>,
     pub prepayment_effect: Option<PrepaymentEffect>,
+    pub next_reset_rate: Option<u64>,
+    pub drawing_amount: Option<u64>,
+    pub repayment_amount: Option<u64>,
+    pub index_value: Option<u64>,
 }
 
 /// ContractType from `CT = PAM, LAM, NAM, ANN, STK, ...`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum ContractType {
-    PAM   = 0, // Principal at maturity
-    LAM   = 1, // Linear amortizer
-    NAM   = 2, // Negative amortizer
-    ANN   = 3, // Annuity
-    STK   = 4, // Stock
-    OPTNS = 5, // Option
-    FUTUR = 6, // Future
-    COM   = 7, // Commodity
-    CSH   = 8, // Cash
-    CLM   = 9, // Call Money
-    SWPPV = 10,// Plain Vanilla Swap
-    SWAPS = 11,// Swap
-    CEG   = 12,// Guarantee
-    CEC   = 13 // Collateral
+    PAM = 0,    // Principal at maturity
+    LAM = 1,    // Linear amortizer
+    NAM = 2,    // Negative amortizer
+    ANN = 3,    // Annuity
+    STK = 4,    // Stock
+    OPTNS = 5,  // Option
+    FUTUR = 6,  // Future
+    COM = 7,    // Commodity
+    CSH = 8,    // Cash
+    CLM = 9,    // Call Money
+    SWPPV = 10, // Plain Vanilla Swap
+    SWAPS = 11, // Swap
+    CEG = 12,   // Guarantee
+    CEC = 13,   // Collateral
+    NAX = 14,
+    ANX = 15,
+    LAX = 16,
+    PBN = 17,
 }
 
 /// ContractRole from `CR_RPA, CR_RPL, CR_CLO, ...`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum ContractRole {
     CR_RPA = 0,
     CR_RPL = 1,
     CR_CLO = 2,
     CR_CNO = 3,
     CR_COL = 4,
-    CR_LG  = 5,
-    CR_ST  = 6,
+    CR_LG = 5,
+    CR_ST = 6,
     CR_BUY = 7,
     CR_SEL = 8,
     CR_RFL = 9,
     CR_PFL = 10,
-    CR_RF  = 11,
-    CR_PF  = 12,
+    CR_RF = 11,
+    CR_PF = 12,
 }
 
 /// DayCountConvention from `DCC_A_AISDA, ...`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum DayCountConvention {
-    DCC_A_AISDA     = 0, // "AA"
-    DCC_A_360       = 1, // "A360"
-    DCC_A_365       = 2, // "A365"
+    DCC_A_AISDA = 0,     // "AA"
+    DCC_A_360 = 1,       // "A360"
+    DCC_A_365 = 2,       // "A365"
     DCC_E30_360ISDA = 3, // "30E360ISDA"
-    DCC_E30_360     = 4, // "30E360"
-    DCC_B_252       = 5, // "B252"
+    DCC_E30_360 = 4,     // "30E360"
+    DCC_B_252 = 5,       // "B252"
 }
 
 /// EndOfMonthConvention from `EOMC_EOM, EOMC_SD`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum EndOfMonthConvention {
     EOMC_EOM = 0, // End of month
-    EOMC_SD  = 1  // Same day
+    EOMC_SD = 1,  // Same day
 }
 
 /// BusinessDayConvention
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum BusinessDayConvention {
     BDC_NULL = 0,
-    BDC_SCF  = 1,
+    BDC_SCF = 1,
     BDC_SCMF = 2,
-    BDC_CSF  = 3,
+    BDC_CSF = 3,
     BDC_CSMF = 4,
-    BDC_SCP  = 5,
+    BDC_SCP = 5,
     BDC_SCMP = 6,
-    BDC_CSP  = 7,
+    BDC_CSP = 7,
     BDC_CSMP = 8,
 }
 
 /// Calendar from `CLDR_MF, CLDR_NC`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum Calendar {
     CLDR_MF = 0, // Monday-Friday
     CLDR_NC = 1, // No calendar
@@ -291,6 +306,7 @@ pub enum Calendar {
 
 /// A small struct to hold schedule config
 #[derive(Debug, Clone, PartialEq, BorshSerialize, BorshDeserialize)]
+#[borsh(crate = "wasmlanche::borsh")]
 pub struct ScheduleConfig {
     pub calendar: Option<Calendar>,
     pub end_of_month_convention: Option<EndOfMonthConvention>,
@@ -300,18 +316,18 @@ pub struct ScheduleConfig {
 /// PRF = ContractPerformance is above.
 
 /// Additional enumerations if needed for coverageOfCreditEnhancement, creditEventTypeCovered, etc.
-/// e.g., GuaranteedExposure, FeeBasis, IPCB, SCEF, etc. 
+/// e.g., GuaranteedExposure, FeeBasis, IPCB, SCEF, etc.
 /// Shown below are some you might need:
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum GuaranteedExposure {
     CEGE_NO = 0,
     CEGE_NI = 1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum FeeBasis {
     FEB_A = 0,
     FEB_N = 1,
@@ -319,16 +335,16 @@ pub enum FeeBasis {
 
 /// IPCB = InterestCalculationBase in Haskell
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum IPCB {
-    IPCB_NT    = 0,
+    IPCB_NT = 0,
     IPCB_NTIED = 1,
-    IPCB_NTL   = 2,
+    IPCB_NTL = 2,
 }
 
 /// SCEF = ScalingEffect in Haskell
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum ScalingEffect {
     SE_OOO = 0,
     SE_IOO = 1,
@@ -341,7 +357,7 @@ pub enum ScalingEffect {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum PenaltyType {
     PYTP_A = 0,
     PYTP_N = 1,
@@ -350,7 +366,7 @@ pub enum PenaltyType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-#[repr(u8)]
+#[borsh(crate = "wasmlanche::borsh", use_discriminant = true)]
 pub enum PrepaymentEffect {
     PPEF_N = 0,
     PPEF_A = 1,
@@ -360,6 +376,7 @@ pub enum PrepaymentEffect {
 /// Period / Cycle structs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 #[repr(u8)]
+#[borsh(use_discriminant = true)]
 pub enum Period {
     P_D = 0,
     P_W = 1,
@@ -372,9 +389,10 @@ pub enum Period {
 /// Stub enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 #[repr(u8)]
+#[borsh(use_discriminant = true)]
 pub enum Stub {
     ShortStub = 0,
-    LongStub  = 1,
+    LongStub = 1,
 }
 
 #[derive(Debug, Clone, PartialEq, BorshSerialize, BorshDeserialize)]
@@ -398,9 +416,15 @@ pub struct ShiftedDay {
 
 impl ShiftedDay {
     pub fn new(payment_day: Timestamp, calculation_day: Timestamp) -> Self {
-        Self { payment_day, calculation_day }
+        Self {
+            payment_day,
+            calculation_day,
+        }
     }
     pub fn from_single(day: Timestamp) -> Self {
-        Self { payment_day: day, calculation_day: day }
+        Self {
+            payment_day: day,
+            calculation_day: day,
+        }
     }
 }
